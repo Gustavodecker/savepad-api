@@ -43,7 +43,7 @@ async function initDB() {
     transaction_id TEXT
   )`);
 
-  console.log("🗄️ Banco de dados inicializado em ./database/savepad.db");
+  console.log("🗄️ Banco de dados inicializado em ./bot-whatsapp/savepad.db");
 }
 
 // ========== ROTAS ==========
