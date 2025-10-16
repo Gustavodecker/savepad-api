@@ -12,6 +12,7 @@
     "dayjs": "^1.11.18",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "mercadopago": "^2.9.0",
     "node-fetch": "^3.3.2",
     "sqlite3": "^5.1.7"
   }
