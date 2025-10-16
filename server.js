@@ -6,8 +6,7 @@
  * Recursos principais:
  *  - Cadastro de usuários e planos
  *  - Integração com Mercado Pago (sandbox/teste)
- *  - Consulta de status do plano
- *  - Webhook para atualização automática
+ *  - Atualização automática via webhook
  ****************************************************************************************/
 
 import express from "express";
@@ -35,40 +34,25 @@ let db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) console.error("❌ Erro ao abrir o banco:", err);
   else console.log(`📦 Banco conectado: ${DB_PATH}`);
 });
-
 const dbAll = promisify(db.all.bind(db));
 const dbRun = promisify(db.run.bind(db));
 const dbGet = promisify(db.get.bind(db));
 
-// Garante que a tabela exista (caso o banco seja novo)
-db.run(`
-  CREATE TABLE IF NOT EXISTS plans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT,
-    nome_plano TEXT,
-    preco REAL,
-    status_pagamento TEXT,
-    payment_id TEXT,
-    data_criacao TEXT,
-    data_pagamento TEXT
-  )
-`);
-
-// ================== MERCADO PAGO (SDK v2.9.0) ==================
+// ================== MERCADO PAGO ==================
 const client = new MercadoPagoConfig({
   accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
 });
 
-// ================== ROTA RAIZ ==================
+// ================== ROTA PRINCIPAL ==================
 app.get("/", (req, res) => {
   res.send("🚀 SavePad API rodando com SDK v2.9.0 do Mercado Pago!");
 });
 
 // ================== LISTAR PLANOS ==================
-app.get("/planos", async (req, res) => {
+app.get("/plans", async (req, res) => {
   try {
-    const planos = await dbAll("SELECT * FROM plans ORDER BY data_criacao DESC");
-    res.json(planos);
+    const rows = await dbAll("SELECT * FROM plans ORDER BY id DESC");
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -81,16 +65,14 @@ app.post("/checkout", async (req, res) => {
 
     // Planos disponíveis
     const planosDisponiveis = {
-      basico: { nome: "SavePad Básico", preco: 10.0 },
-      pro: { nome: "SavePad Pro", preco: 20.0 },
+      basico: { nome: "SavePad Básico", preco: 10.0, duracaoDias: 30 },
+      pro: { nome: "SavePad Pro", preco: 20.0, duracaoDias: 30 },
     };
 
     const escolhido = planosDisponiveis[plano];
-    if (!escolhido) {
+    if (!escolhido)
       return res.status(400).json({ error: "Plano inválido" });
-    }
 
-    // Cria preferência no Mercado Pago
     const preference = new Preference(client);
     const response = await preference.create({
       body: {
@@ -113,19 +95,14 @@ app.post("/checkout", async (req, res) => {
 
     const preferenceId = response.id || response.body?.id;
 
-    // Grava no banco
+    // Define expiração 30 dias após pagamento
+    const expiresAt = dayjs().add(escolhido.duracaoDias, "day").format("YYYY-MM-DD");
+
+    // Grava no banco (campos existentes)
     await dbRun(
-      `INSERT INTO plans 
-        (user_id, nome_plano, preco, status_pagamento, payment_id, data_criacao)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        user_id,
-        escolhido.nome,
-        escolhido.preco,
-        "pendente",
-        preferenceId,
-        dayjs().format("YYYY-MM-DD HH:mm:ss"),
-      ]
+      `INSERT INTO plans (user_id, type, expires_at, status)
+       VALUES (?, ?, ?, ?)`,
+      [user_id, plano, expiresAt, "pending"]
     );
 
     res.json({
@@ -149,7 +126,6 @@ app.post("/webhook", async (req, res) => {
 
     console.log("🔔 Webhook recebido:", req.body);
 
-    // Busca detalhes completos do pagamento
     let payment;
     try {
       payment = await new Payment(client).get({ id: paymentId });
@@ -162,17 +138,18 @@ app.post("/webhook", async (req, res) => {
     }
 
     const status = payment.status;
-    const transaction_amount = payment.transaction_amount;
     const payer_email = payment.payer?.email || "desconhecido";
 
-    console.log(`💰 Pagamento ${paymentId}: ${status} - R$${transaction_amount} - ${payer_email}`);
+    console.log(`💰 Pagamento ${paymentId}: ${status} - ${payer_email}`);
 
-    // Atualiza o status do plano no banco
+    // Atualiza o status do plano no banco (último plano pendente do usuário)
     await dbRun(
-      `UPDATE plans 
-         SET status_pagamento = ?, data_pagamento = ? 
-         WHERE payment_id = ?`,
-      [status, dayjs().format("YYYY-MM-DD HH:mm:ss"), paymentId]
+      `UPDATE plans
+         SET status = ?
+       WHERE status = 'pending'
+       ORDER BY id DESC
+       LIMIT 1`,
+      [status]
     );
 
     res.status(200).json({ received: true });
@@ -187,16 +164,15 @@ app.get("/status/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
     const plano = await dbGet(
-      `SELECT * FROM plans 
-         WHERE user_id = ? 
-         ORDER BY data_criacao DESC 
+      `SELECT * FROM plans
+         WHERE user_id = ?
+         ORDER BY id DESC
          LIMIT 1`,
       [user_id]
     );
 
-    if (!plano) {
+    if (!plano)
       return res.status(404).json({ error: "Plano não encontrado" });
-    }
 
     res.json(plano);
   } catch (err) {
