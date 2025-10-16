@@ -22,7 +22,6 @@ const { MercadoPagoConfig, Preference, Payment } = pkg;
 dotenv.config();
 
 // ================== CONFIGURAÇÃO BÁSICA ==================
-
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -36,19 +35,39 @@ let db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) console.error("❌ Erro ao abrir o banco:", err);
   else console.log(`📦 Banco conectado: ${DB_PATH}`);
 });
+
 const dbAll = promisify(db.all.bind(db));
 const dbRun = promisify(db.run.bind(db));
 const dbGet = promisify(db.get.bind(db));
 
-// ================== MERCADO PAGO (SDK v2) ==================
+// Garante que a tabela exista (caso o banco seja novo)
+db.run(`
+  CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    nome_plano TEXT,
+    preco REAL,
+    status_pagamento TEXT,
+    payment_id TEXT,
+    data_criacao TEXT,
+    data_pagamento TEXT
+  )
+`);
+
+// ================== MERCADO PAGO (SDK v2.9.0) ==================
 const client = new MercadoPagoConfig({
   accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
+});
+
+// ================== ROTA RAIZ ==================
+app.get("/", (req, res) => {
+  res.send("🚀 SavePad API rodando com SDK v2.9.0 do Mercado Pago!");
 });
 
 // ================== LISTAR PLANOS ==================
 app.get("/planos", async (req, res) => {
   try {
-    const planos = await dbAll("SELECT * FROM planos");
+    const planos = await dbAll("SELECT * FROM plans ORDER BY data_criacao DESC");
     res.json(planos);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -67,8 +86,9 @@ app.post("/checkout", async (req, res) => {
     };
 
     const escolhido = planosDisponiveis[plano];
-    if (!escolhido)
+    if (!escolhido) {
       return res.status(400).json({ error: "Plano inválido" });
+    }
 
     // Cria preferência no Mercado Pago
     const preference = new Preference(client);
@@ -95,8 +115,17 @@ app.post("/checkout", async (req, res) => {
 
     // Grava no banco
     await dbRun(
-      "INSERT INTO planos (user_id, nome_plano, preco, status_pagamento, payment_id, data_criacao) VALUES (?, ?, ?, ?, ?, ?)",
-      [user_id, escolhido.nome, escolhido.preco, "pendente", preferenceId, dayjs().format("YYYY-MM-DD HH:mm:ss")]
+      `INSERT INTO plans 
+        (user_id, nome_plano, preco, status_pagamento, payment_id, data_criacao)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        user_id,
+        escolhido.nome,
+        escolhido.preco,
+        "pendente",
+        preferenceId,
+        dayjs().format("YYYY-MM-DD HH:mm:ss"),
+      ]
     );
 
     res.json({
@@ -121,17 +150,28 @@ app.post("/webhook", async (req, res) => {
     console.log("🔔 Webhook recebido:", req.body);
 
     // Busca detalhes completos do pagamento
-    const payment = await new Payment(client).get({ id: paymentId });
+    let payment;
+    try {
+      payment = await new Payment(client).get({ id: paymentId });
+    } catch (err) {
+      if (err.status === 404) {
+        console.warn("⚠️ Pagamento não encontrado (provavelmente teste do simulador).");
+        return res.status(200).json({ received: true });
+      }
+      throw err;
+    }
 
     const status = payment.status;
     const transaction_amount = payment.transaction_amount;
     const payer_email = payment.payer?.email || "desconhecido";
 
-    console.log(`💰 Pagamento ${paymentId}: ${status} - R$${transaction_amount}`);
+    console.log(`💰 Pagamento ${paymentId}: ${status} - R$${transaction_amount} - ${payer_email}`);
 
     // Atualiza o status do plano no banco
     await dbRun(
-      "UPDATE planos SET status_pagamento = ?, data_pagamento = ? WHERE payment_id = ?",
+      `UPDATE plans 
+         SET status_pagamento = ?, data_pagamento = ? 
+         WHERE payment_id = ?`,
       [status, dayjs().format("YYYY-MM-DD HH:mm:ss"), paymentId]
     );
 
@@ -147,10 +187,17 @@ app.get("/status/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
     const plano = await dbGet(
-      "SELECT * FROM planos WHERE user_id = ? ORDER BY data_criacao DESC LIMIT 1",
+      `SELECT * FROM plans 
+         WHERE user_id = ? 
+         ORDER BY data_criacao DESC 
+         LIMIT 1`,
       [user_id]
     );
-    if (!plano) return res.status(404).json({ error: "Plano não encontrado" });
+
+    if (!plano) {
+      return res.status(404).json({ error: "Plano não encontrado" });
+    }
+
     res.json(plano);
   } catch (err) {
     res.status(500).json({ error: err.message });
