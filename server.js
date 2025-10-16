@@ -163,17 +163,12 @@ app.get("/usuarios", async (req, res) => {
 });
 
 /****************************************************************************************
- * 🔹 MERCADO PAGO - Integração Sandbox
- * --------------------------------------------------------------------------------------
- * /checkout → cria um link de pagamento
- * /webhook → recebe confirmação e ativa o plano no banco
+ * 🔹 MERCADO PAGO - Integração Sandbox (SDK nova)
  ****************************************************************************************/
+import { MercadoPagoConfig, Preference, Payment } from "mercadopago";
 
-import mercadopago from "mercadopago";
-
-// Configura credenciais Mercado Pago
-mercadopago.configure({
-  access_token: process.env.MERCADO_PAGO_ACCESS_TOKEN,
+const mpClient = new MercadoPagoConfig({
+  accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
 });
 
 // 🔸 Criar checkout (gerar link de pagamento)
@@ -182,11 +177,11 @@ app.post("/checkout", async (req, res) => {
     const { user_id, type = "individual" } = req.body;
     if (!user_id) return res.status(400).json({ error: "user_id é obrigatório" });
 
-    const planPrice = type === "familiar" ? 30 : 15; // valores de exemplo
+    const planPrice = type === "familiar" ? 30 : 15;
     const dias = type === "familiar" ? 60 : 30;
     const expires = dayjs().add(dias, "day").toISOString();
 
-    const preference = {
+    const preferenceData = {
       items: [
         {
           title: `Plano ${type === "familiar" ? "Familiar" : "Individual"} SavePad`,
@@ -204,9 +199,9 @@ app.post("/checkout", async (req, res) => {
       external_reference: `${user_id}|${type}`,
     };
 
-    const response = await mercadopago.preferences.create(preference);
+    const preference = new Preference(mpClient);
+    const response = await preference.create({ body: preferenceData });
 
-    // Salva registro inicial do plano como "pendente"
     await dbRun(
       "INSERT INTO plans (user_id, type, status, expires_at) VALUES (?, ?, 'pendente', ?)",
       [user_id, type, expires]
@@ -214,7 +209,7 @@ app.post("/checkout", async (req, res) => {
 
     res.json({
       success: true,
-      checkout_url: response.body.init_point,
+      checkout_url: response.init_point,
       message: `Plano ${type} criado e aguardando pagamento.`,
     });
   } catch (err) {
@@ -223,7 +218,7 @@ app.post("/checkout", async (req, res) => {
   }
 });
 
-// 🔸 Webhook (notificação automática do Mercado Pago)
+// 🔸 Webhook (notificação automática)
 app.post("/webhook", express.json(), async (req, res) => {
   try {
     const payment = req.body;
@@ -231,10 +226,9 @@ app.post("/webhook", express.json(), async (req, res) => {
 
     if (payment.type === "payment") {
       const id = payment.data.id;
-
-      // Busca detalhes do pagamento
-      const data = await mercadopago.payment.findById(id);
-      const { status, external_reference } = data.body;
+      const paymentAPI = new Payment(mpClient);
+      const data = await paymentAPI.get({ id });
+      const { status, external_reference } = data;
       const [user_id, type] = external_reference.split("|");
 
       if (status === "approved") {
