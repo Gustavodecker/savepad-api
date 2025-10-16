@@ -17,6 +17,7 @@ import dayjs from "dayjs";
 import cors from "cors";
 import pkg from "mercadopago";
 const { MercadoPagoConfig, Preference, Payment } = pkg;
+import { notificarBotPagamento } from "./botIntegration.js";
 
 dotenv.config();
 
@@ -152,12 +153,23 @@ app.post("/webhook", async (req, res) => {
       [status]
     );
 
+    // 🚀 NOVO TRECHO: notifica o bot caso o pagamento seja aprovado
+    if (status === "approved") {
+      await notificarBotPagamento({
+        user_id: payer_email,
+        plano: "SavePad Pro",
+        status,
+        valor: payment.transaction_amount
+      });
+    }
+
     res.status(200).json({ received: true });
   } catch (err) {
     console.error("❌ Erro no webhook:", err);
     res.status(500).json({ error: "Erro interno no servidor" });
   }
 });
+
 
 // ================== CONSULTAR STATUS DO PLANO ==================
 app.get("/status/:user_id", async (req, res) => {
