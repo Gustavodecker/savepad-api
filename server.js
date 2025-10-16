@@ -1,12 +1,13 @@
 /****************************************************************************************
  * SAVEpad API - Servidor de Planos e Pagamentos
  * --------------------------------------------------------------------------------------
- * Unificado com o mesmo banco do bot WhatsApp (/root/bot-whatsapp/savepad.db)
+ * Banco compartilhado com o bot WhatsApp (/root/bot-whatsapp/savepad.db)
  * 
  * Recursos principais:
  *  - Cadastro de usuários e planos
- *  - Integração futura com Mercado Pago
+ *  - Integração com Mercado Pago (sandbox/teste)
  *  - Consulta de status do plano
+ *  - Webhook para atualização automática
  ****************************************************************************************/
 
 import express from "express";
@@ -15,6 +16,7 @@ import sqlite3 from "sqlite3";
 import { promisify } from "util";
 import dayjs from "dayjs";
 import cors from "cors";
+import mercadopago from "mercadopago";
 
 dotenv.config();
 
@@ -24,235 +26,133 @@ app.use(express.json());
 app.use(cors());
 
 const PORT = process.env.PORT || 4000;
+const DB_PATH = process.env.DB_PATH || "/root/bot-whatsapp/savepad.db";
+const BASE_URL = process.env.BASE_URL || "https://example.ngrok-free.app";
 
-// ================== BANCO DE DADOS UNIFICADO ==================
-let db;
-let dbRun, dbAll, dbGet;
+// ================== BANCO DE DADOS ==================
+let db = new sqlite3.Database(DB_PATH, (err) => {
+  if (err) console.error("Erro ao abrir o banco:", err);
+  else console.log(`📦 Banco conectado: ${DB_PATH}`);
+});
+const dbAll = promisify(db.all.bind(db));
+const dbRun = promisify(db.run.bind(db));
+const dbGet = promisify(db.get.bind(db));
 
-async function initDB() {
-  try {
-    const dbPath = "/root/bot-whatsapp/savepad.db";
-    db = new sqlite3.Database(dbPath, (err) => {
-      if (err) {
-        console.error("❌ Erro ao conectar no banco unificado:", err.message);
-      } else {
-        console.log(`🗄️ Banco de dados unificado conectado: ${dbPath}`);
-      }
-    });
+// ================== MERCADO PAGO ==================
+mercadopago.configure({
+  access_token: process.env.MERCADO_PAGO_ACCESS_TOKEN,
+});
 
-    // Habilita modo de escrita simultânea
-    db.run("PRAGMA journal_mode=WAL;");
-
-    dbRun = promisify(db.run).bind(db);
-    dbAll = promisify(db.all).bind(db);
-    dbGet = promisify(db.get).bind(db);
-
-    // Cria tabelas se não existirem
-    await dbRun(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        phone TEXT UNIQUE,
-        name TEXT,
-        plan_id INTEGER,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    await dbRun(`
-      CREATE TABLE IF NOT EXISTS plans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        type TEXT,
-        status TEXT DEFAULT 'ativo',
-        expires_at TEXT
-      )
-    `);
-
-    console.log("✅ Banco inicializado e tabelas garantidas.");
-  } catch (error) {
-    console.error("❌ Erro ao inicializar o banco unificado:", error);
-  }
-}
-
-// ================== ROTAS ==================
-
-// 🔹 Rota básica (teste)
+// ================== ROTAS BÁSICAS ==================
 app.get("/", (req, res) => {
-  res.json({ message: "🚀 SavePad API online e funcional!" });
+  res.send("🚀 SavePad API rodando!");
 });
 
-// 🔹 Cria ou renova plano (mock — futura integração Mercado Pago)
-app.post("/planos", async (req, res) => {
-  try {
-    const { user_id, type = "individual", dias = 30 } = req.body;
-    if (!user_id) return res.status(400).json({ error: "user_id é obrigatório" });
-
-    const expires = dayjs().add(dias, "day").toISOString();
-
-    await dbRun(
-      "INSERT INTO plans (user_id, type, status, expires_at) VALUES (?, ?, 'ativo', ?)",
-      [user_id, type, expires]
-    );
-
-    res.json({
-      success: true,
-      message: `Plano ${type} criado com validade até ${dayjs(expires).format("DD/MM/YYYY")}`,
-    });
-  } catch (err) {
-    console.error("❌ Erro ao criar plano:", err);
-    res.status(500).json({ error: "Erro interno ao criar plano" });
-  }
-});
-
-// 🔹 Lista todos os planos ativos
+// ================== LISTAR PLANOS ==================
 app.get("/planos", async (req, res) => {
   try {
-    const rows = await dbAll("SELECT * FROM plans WHERE status = 'ativo'");
-    res.json(rows);
+    const planos = await dbAll("SELECT * FROM planos");
+    res.json(planos);
   } catch (err) {
-    res.status(500).json({ error: "Erro ao listar planos" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 🔹 Consulta status de um plano
-app.get("/status/:user_id", async (req, res) => {
-  try {
-    const { user_id } = req.params;
-    const plan = await dbGet(
-      "SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1",
-      [user_id]
-    );
-
-    if (!plan) return res.json({ ativo: false, mensagem: "Nenhum plano ativo encontrado." });
-
-    const diasRestantes = dayjs(plan.expires_at).diff(dayjs(), "day");
-    res.json({
-      ativo: diasRestantes >= 0,
-      tipo: plan.type,
-      expira_em: dayjs(plan.expires_at).format("DD/MM/YYYY"),
-      dias_restantes: diasRestantes,
-    });
-  } catch (err) {
-    console.error("❌ Erro ao verificar status:", err);
-    res.status(500).json({ error: "Erro ao verificar status do plano" });
-  }
-});
-
-// 🔹 Cadastro rápido de usuário (mock — integração futura com app)
-app.post("/usuarios", async (req, res) => {
-  try {
-    const { phone, name } = req.body;
-    if (!phone || !name)
-      return res.status(400).json({ error: "Campos obrigatórios: phone e name" });
-
-    await dbRun("INSERT OR IGNORE INTO users (phone, name) VALUES (?, ?)", [phone, name]);
-    res.json({ success: true, message: "Usuário cadastrado com sucesso." });
-  } catch (err) {
-    res.status(500).json({ error: "Erro ao cadastrar usuário" });
-  }
-});
-
-// 🔹 Lista usuários cadastrados
-app.get("/usuarios", async (req, res) => {
-  try {
-    const rows = await dbAll("SELECT * FROM users ORDER BY id DESC");
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: "Erro ao listar usuários" });
-  }
-});
-
-/****************************************************************************************
- * 🔹 MERCADO PAGO - Integração Sandbox (SDK nova)
- ****************************************************************************************/
-import { MercadoPagoConfig, Preference, Payment } from "mercadopago";
-
-const mpClient = new MercadoPagoConfig({
-  accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
-});
-
-// 🔸 Criar checkout (gerar link de pagamento)
+// ================== GERAR CHECKOUT ==================
 app.post("/checkout", async (req, res) => {
   try {
-    const { user_id, type = "individual" } = req.body;
-    if (!user_id) return res.status(400).json({ error: "user_id é obrigatório" });
+    const { user_id, plano } = req.body;
 
-    const planPrice = type === "familiar" ? 30 : 15;
-    const dias = type === "familiar" ? 60 : 30;
-    const expires = dayjs().add(dias, "day").toISOString();
+    // define planos básicos
+    const planosDisponiveis = {
+      basico: { nome: "SavePad Básico", preco: 10.0 },
+      pro: { nome: "SavePad Pro", preco: 20.0 },
+    };
 
-    const preferenceData = {
+    const escolhido = planosDisponiveis[plano];
+    if (!escolhido)
+      return res.status(400).json({ error: "Plano inválido" });
+
+    // cria preferência no Mercado Pago
+    const preference = {
       items: [
         {
-          title: `Plano ${type === "familiar" ? "Familiar" : "Individual"} SavePad`,
+          title: escolhido.nome,
           quantity: 1,
-          unit_price: planPrice,
           currency_id: "BRL",
+          unit_price: escolhido.preco,
         },
       ],
       back_urls: {
-        success: `${process.env.BASE_URL}/pagamento-sucesso`,
-        failure: `${process.env.BASE_URL}/pagamento-erro`,
+        success: `${BASE_URL}/pagamento-sucesso`,
+        failure: `${BASE_URL}/pagamento-falha`,
       },
-      notification_url: `${process.env.BASE_URL}/webhook`,
+      notification_url: `${BASE_URL}/webhook`,
       auto_return: "approved",
-      external_reference: `${user_id}|${type}`,
     };
 
-    const preference = new Preference(mpClient);
-    const response = await preference.create({ body: preferenceData });
+    const response = await mercadopago.preferences.create(preference);
+    const paymentId = response.body.id;
 
+    // grava no banco
     await dbRun(
-      "INSERT INTO plans (user_id, type, status, expires_at) VALUES (?, ?, 'pendente', ?)",
-      [user_id, type, expires]
+      "INSERT INTO planos (user_id, nome_plano, preco, status_pagamento, payment_id, data_criacao) VALUES (?, ?, ?, ?, ?, ?)",
+      [user_id, escolhido.nome, escolhido.preco, "pendente", paymentId, dayjs().format("YYYY-MM-DD HH:mm:ss")]
     );
 
-    res.json({
-      success: true,
-      checkout_url: response.init_point,
-      message: `Plano ${type} criado e aguardando pagamento.`,
-    });
+    res.json({ checkout_url: response.body.init_point });
   } catch (err) {
-    console.error("❌ Erro ao criar checkout:", err);
-    res.status(500).json({ error: "Erro ao gerar link de pagamento" });
+    console.error("Erro ao criar checkout:", err);
+    res.status(500).json({ error: "Erro interno ao criar pagamento" });
   }
 });
 
-// 🔸 Webhook (notificação automática)
-app.post("/webhook", express.json(), async (req, res) => {
+// ================== WEBHOOK MERCADO PAGO ==================
+app.post("/webhook", async (req, res) => {
   try {
-    const payment = req.body;
-    if (!payment || !payment.data || !payment.type) return res.sendStatus(200);
-
-    if (payment.type === "payment") {
-      const id = payment.data.id;
-      const paymentAPI = new Payment(mpClient);
-      const data = await paymentAPI.get({ id });
-      const { status, external_reference } = data;
-      const [user_id, type] = external_reference.split("|");
-
-      if (status === "approved") {
-        const expires = dayjs().add(type === "familiar" ? 60 : 30, "day").toISOString();
-        await dbRun(
-          "UPDATE plans SET status = 'ativo', expires_at = ? WHERE user_id = ? AND type = ?",
-          [expires, user_id, type]
-        );
-        console.log(`✅ Pagamento aprovado para ${user_id} (${type})`);
-      } else {
-        console.log(`⚠️ Pagamento não aprovado: ${status}`);
-      }
+    const paymentId = req.body?.data?.id;
+    if (!paymentId) {
+      console.log("Webhook recebido sem ID válido:", req.body);
+      return res.status(400).json({ error: "ID de pagamento ausente" });
     }
 
-    res.sendStatus(200);
+    console.log("🔔 Webhook recebido:", req.body);
+
+    // Busca detalhes completos do pagamento
+    const payment = await mercadopago.payment.findById(paymentId);
+    const { status, transaction_amount, payer } = payment.body;
+
+    console.log("💰 Pagamento encontrado:", status, transaction_amount);
+
+    // Atualiza o status do plano no banco
+    await dbRun(
+      "UPDATE planos SET status_pagamento = ?, data_pagamento = ? WHERE payment_id = ?",
+      [status, dayjs().format("YYYY-MM-DD HH:mm:ss"), paymentId]
+    );
+
+    res.status(200).json({ received: true });
   } catch (err) {
     console.error("❌ Erro no webhook:", err);
-    res.sendStatus(500);
+    res.status(500).json({ error: "Erro interno no servidor" });
   }
 });
 
+// ================== CONSULTAR STATUS DO PLANO ==================
+app.get("/status/:user_id", async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    const plano = await dbGet(
+      "SELECT * FROM planos WHERE user_id = ? ORDER BY data_criacao DESC LIMIT 1",
+      [user_id]
+    );
+    if (!plano) return res.status(404).json({ error: "Plano não encontrado" });
+    res.json(plano);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-// ================== INICIALIZAÇÃO ==================
-app.listen(PORT, async () => {
-  await initDB();
+// ================== INICIAR SERVIDOR ==================
+app.listen(PORT, () => {
   console.log(`🚀 SavePad API rodando na porta ${PORT}`);
 });
