@@ -162,6 +162,101 @@ app.get("/usuarios", async (req, res) => {
   }
 });
 
+/****************************************************************************************
+ * 🔹 MERCADO PAGO - Integração Sandbox
+ * --------------------------------------------------------------------------------------
+ * /checkout → cria um link de pagamento
+ * /webhook → recebe confirmação e ativa o plano no banco
+ ****************************************************************************************/
+
+import mercadopago from "mercadopago";
+
+// Configura credenciais Mercado Pago
+mercadopago.configure({
+  access_token: process.env.MERCADO_PAGO_ACCESS_TOKEN,
+});
+
+// 🔸 Criar checkout (gerar link de pagamento)
+app.post("/checkout", async (req, res) => {
+  try {
+    const { user_id, type = "individual" } = req.body;
+    if (!user_id) return res.status(400).json({ error: "user_id é obrigatório" });
+
+    const planPrice = type === "familiar" ? 30 : 15; // valores de exemplo
+    const dias = type === "familiar" ? 60 : 30;
+    const expires = dayjs().add(dias, "day").toISOString();
+
+    const preference = {
+      items: [
+        {
+          title: `Plano ${type === "familiar" ? "Familiar" : "Individual"} SavePad`,
+          quantity: 1,
+          unit_price: planPrice,
+          currency_id: "BRL",
+        },
+      ],
+      back_urls: {
+        success: `${process.env.BASE_URL}/pagamento-sucesso`,
+        failure: `${process.env.BASE_URL}/pagamento-erro`,
+      },
+      notification_url: `${process.env.BASE_URL}/webhook`,
+      auto_return: "approved",
+      external_reference: `${user_id}|${type}`,
+    };
+
+    const response = await mercadopago.preferences.create(preference);
+
+    // Salva registro inicial do plano como "pendente"
+    await dbRun(
+      "INSERT INTO plans (user_id, type, status, expires_at) VALUES (?, ?, 'pendente', ?)",
+      [user_id, type, expires]
+    );
+
+    res.json({
+      success: true,
+      checkout_url: response.body.init_point,
+      message: `Plano ${type} criado e aguardando pagamento.`,
+    });
+  } catch (err) {
+    console.error("❌ Erro ao criar checkout:", err);
+    res.status(500).json({ error: "Erro ao gerar link de pagamento" });
+  }
+});
+
+// 🔸 Webhook (notificação automática do Mercado Pago)
+app.post("/webhook", express.json(), async (req, res) => {
+  try {
+    const payment = req.body;
+    if (!payment || !payment.data || !payment.type) return res.sendStatus(200);
+
+    if (payment.type === "payment") {
+      const id = payment.data.id;
+
+      // Busca detalhes do pagamento
+      const data = await mercadopago.payment.findById(id);
+      const { status, external_reference } = data.body;
+      const [user_id, type] = external_reference.split("|");
+
+      if (status === "approved") {
+        const expires = dayjs().add(type === "familiar" ? 60 : 30, "day").toISOString();
+        await dbRun(
+          "UPDATE plans SET status = 'ativo', expires_at = ? WHERE user_id = ? AND type = ?",
+          [expires, user_id, type]
+        );
+        console.log(`✅ Pagamento aprovado para ${user_id} (${type})`);
+      } else {
+        console.log(`⚠️ Pagamento não aprovado: ${status}`);
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("❌ Erro no webhook:", err);
+    res.sendStatus(500);
+  }
+});
+
+
 // ================== INICIALIZAÇÃO ==================
 app.listen(PORT, async () => {
   await initDB();
