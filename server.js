@@ -16,11 +16,13 @@ import sqlite3 from "sqlite3";
 import { promisify } from "util";
 import dayjs from "dayjs";
 import cors from "cors";
-import MercadoPagoConfig, { Preference, Payment } from "mercadopago";
+import pkg from "mercadopago";
+const { MercadoPagoConfig, Preference, Payment } = pkg;
 
 dotenv.config();
 
 // ================== CONFIGURAÇÃO BÁSICA ==================
+
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -41,11 +43,6 @@ const dbGet = promisify(db.get.bind(db));
 // ================== MERCADO PAGO (SDK v2) ==================
 const client = new MercadoPagoConfig({
   accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
-});
-
-// ================== ROTAS BÁSICAS ==================
-app.get("/", (req, res) => {
-  res.send("🚀 SavePad API rodando com SDK v2 do Mercado Pago!");
 });
 
 // ================== LISTAR PLANOS ==================
