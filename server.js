@@ -20,6 +20,8 @@ import pkg from "mercadopago";
 import crypto from "crypto";
 const { MercadoPagoConfig, Preference, Payment } = pkg;
 import { notificarBotPagamento } from "./botIntegration.js";
+import bcrypt from "bcrypt";
+
 
 dotenv.config();
 
@@ -60,6 +62,31 @@ app.get("/plans", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ================== CADASTRO DE USUÁRIO ==================
+app.post("/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: "Preencha todos os campos." });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    await dbRun(
+      `INSERT INTO users (name, email, password_hash, created_at)
+       VALUES (?, ?, ?, datetime('now'))`,
+      [name, email, hashed]
+    );
+
+    res.json({ success: true, message: "Usuário criado com sucesso!" });
+  } catch (err) {
+    console.error("❌ Erro no cadastro:", err);
+    res.status(500).json({ error: "Erro ao criar usuário." });
+  }
+});
+
 
 // ================== GERAR CHECKOUT ==================
 app.post("/checkout", async (req, res) => {
