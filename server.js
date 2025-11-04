@@ -87,6 +87,41 @@ app.post("/register", async (req, res) => {
   }
 });
 
+// ================== LOGIN DE USUÁRIO ==================
+app.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Informe email e senha." });
+    }
+
+    const user = await dbGet("SELECT * FROM users WHERE email = ?", [email]);
+    if (!user) {
+      return res.status(401).json({ error: "Email ou senha inválidos." });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: "Email ou senha inválidos." });
+    }
+
+    res.json({
+      success: true,
+      message: "Login bem-sucedido!",
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        plan_id: user.plan_id,
+        whatsapp_number: user.whatsapp_number
+      }
+    });
+  } catch (err) {
+    console.error("❌ Erro no login:", err);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+});
+
 
 // ================== GERAR CHECKOUT ==================
 app.post("/checkout", async (req, res) => {
