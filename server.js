@@ -7,6 +7,7 @@
  *  - Cadastro de usuários e planos
  *  - Integração com Mercado Pago (sandbox/teste)
  *  - Atualização automática via webhook
+ *  - Vinculação de conta com WhatsApp (AdminGrana)
  ****************************************************************************************/
 
 import express from "express";
@@ -16,6 +17,7 @@ import { promisify } from "util";
 import dayjs from "dayjs";
 import cors from "cors";
 import pkg from "mercadopago";
+import crypto from "crypto";
 const { MercadoPagoConfig, Preference, Payment } = pkg;
 import { notificarBotPagamento } from "./botIntegration.js";
 
@@ -170,7 +172,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-
 // ================== CONSULTAR STATUS DO PLANO ==================
 app.get("/status/:user_id", async (req, res) => {
   try {
@@ -189,6 +190,39 @@ app.get("/status/:user_id", async (req, res) => {
     res.json(plano);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ================== NOVAS ROTAS: VINCULAÇÃO DE WHATSAPP ==================
+app.post("/api/link-whatsapp", async (req, res) => {
+  try {
+    const { user_id } = req.body;
+    if (!user_id) return res.status(400).json({ error: "user_id obrigatório" });
+
+    const code = "AG-" + crypto.randomInt(100000, 999999);
+    await dbRun("UPDATE users SET verification_code = ? WHERE id = ?", [code, user_id]);
+
+    console.log(`🔗 Código gerado para usuário ${user_id}: ${code}`);
+    res.json({ code });
+  } catch (err) {
+    console.error("❌ Erro ao gerar código:", err);
+    res.status(500).json({ error: "Erro interno ao gerar código" });
+  }
+});
+
+app.get("/api/check-whatsapp-link", async (req, res) => {
+  try {
+    const { user_id } = req.query;
+    if (!user_id) return res.status(400).json({ error: "user_id obrigatório" });
+
+    const user = await dbGet("SELECT whatsapp_number FROM users WHERE id = ?", [user_id]);
+    res.json({
+      linked: !!user?.whatsapp_number,
+      whatsapp_number: user?.whatsapp_number || null,
+    });
+  } catch (err) {
+    console.error("❌ Erro ao consultar status de vinculação:", err);
+    res.status(500).json({ error: "Erro interno ao consultar" });
   }
 });
 
