@@ -240,39 +240,24 @@ app.get("/status/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
 
-    // 🔍 Busca o usuário para descobrir o identificador real
-    const user =
-      (await dbGet(`SELECT * FROM users WHERE id = ? OR email = ? OR phone = ?`, [
-        user_id,
-        user_id,
-        user_id,
-      ])) || null;
+    // 🔍 1️⃣ Verifica se o usuário é membro de uma família
+    const member = await dbGet(
+      "SELECT owner_id FROM family_members WHERE member_id = ? OR member_id IN (SELECT id FROM users WHERE email = ?)",
+      [user_id, user_id]
+    );
 
-    let plano = null;
+    let targetUserId = user_id;
 
-    if (user) {
-      // tenta pelo identificador usado no plano
-      plano =
-        (await dbGet(
-          `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
-          [user.id]
-        )) ||
-        (await dbGet(
-          `SELECT * FROM plans WHERE user_id LIKE ? ORDER BY id DESC LIMIT 1`,
-          [`%${user.email || user.phone || user.id}%`]
-        ));
-    } else {
-      // fallback direto (para casos em que id é número de telefone)
-      plano =
-        (await dbGet(
-          `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
-          [user_id]
-        )) ||
-        (await dbGet(
-          `SELECT * FROM plans WHERE user_id LIKE ? ORDER BY id DESC LIMIT 1`,
-          [`%${user_id}%`]
-        ));
+    // Se ele for membro, herda o plano do dono
+    if (member?.owner_id) {
+      targetUserId = member.owner_id;
     }
+
+    // 🔍 2️⃣ Busca o plano ativo do dono (ou do próprio usuário)
+    const plano = await dbGet(
+      `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
+      [targetUserId]
+    );
 
     if (!plano) {
       return res.json({ status: "Sem plano ativo" });
@@ -281,7 +266,9 @@ app.get("/status/:user_id", async (req, res) => {
     res.json({
       status: plano.status || "Ativo",
       type: plano.type,
-      user_id: plano.user_id,
+      mode: plano.mode,
+      owner_id: targetUserId,
+      user_id,
     });
   } catch (err) {
     console.error("❌ Erro ao consultar plano:", err);
