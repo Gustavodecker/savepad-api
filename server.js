@@ -106,16 +106,17 @@ app.post("/login", async (req, res) => {
     }
 
     res.json({
-      success: true,
-      message: "Login bem-sucedido!",
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        plan_id: user.plan_id,
-        whatsapp_number: user.whatsapp_number
-      }
-    });
+  success: true,
+  message: "Login bem-sucedido!",
+  user: {
+    id: user.id || user.phone || user.email, // 🔹 garante um identificador
+    name: user.name,
+    email: user.email,
+    plan_id: user.plan_id,
+    whatsapp_number: user.whatsapp_number || null
+  }
+});
+
   } catch (err) {
     console.error("❌ Erro no login:", err);
     res.status(500).json({ error: "Erro interno no servidor." });
