@@ -323,6 +323,55 @@ app.get("/api/check-whatsapp-link", async (req, res) => {
   }
 });
 
+// ================== PLANOS FAMILIARES ==================
+
+// 🔹 Adicionar membro da família
+app.post("/family/add", async (req, res) => {
+  try {
+    const { owner_id, member_email, name } = req.body;
+    if (!owner_id || !member_email)
+      return res.status(400).json({ error: "Campos obrigatórios ausentes" });
+
+    const member = await dbGet("SELECT * FROM users WHERE email = ?", [member_email]);
+    if (!member)
+      return res.status(404).json({ error: "Usuário não encontrado" });
+
+    // Evita duplicidade
+    const existing = await dbGet(
+      "SELECT * FROM family_members WHERE owner_id = ? AND member_id = ?",
+      [owner_id, member.id]
+    );
+    if (existing)
+      return res.status(409).json({ error: "Este membro já faz parte da família." });
+
+    await dbRun(
+      "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
+      [owner_id, member.id, name || member.name]
+    );
+
+    res.json({ success: true, message: "Membro adicionado com sucesso!" });
+  } catch (err) {
+    console.error("❌ Erro ao adicionar membro:", err);
+    res.status(500).json({ error: "Erro interno ao adicionar membro." });
+  }
+});
+
+// 🔹 Listar membros da família
+app.get("/family/:owner_id", async (req, res) => {
+  try {
+    const { owner_id } = req.params;
+    const membros = await dbAll(
+      "SELECT id, name, member_id FROM family_members WHERE owner_id = ?",
+      [owner_id]
+    );
+    res.json(membros);
+  } catch (err) {
+    console.error("❌ Erro ao listar membros:", err);
+    res.status(500).json({ error: "Erro ao listar membros." });
+  }
+});
+
+
 // ================== INICIAR SERVIDOR ==================
 app.listen(PORT, () => {
   console.log(`🚀 SavePad API rodando na porta ${PORT}`);
