@@ -358,6 +358,53 @@ app.get("/family/:owner_id", async (req, res) => {
   }
 });
 
+// ================== CONSULTAR MEMBROS DA FAMÍLIA ==================
+app.get("/family/:user_id", async (req, res) => {
+  try {
+    const { user_id } = req.params;
+
+    // 🔹 Verifica se o usuário é dono de família
+    const isOwner = await dbGet(
+      "SELECT 1 FROM family_members WHERE owner_id = ? LIMIT 1",
+      [user_id]
+    );
+
+    let ownerId = user_id;
+
+    // 🔹 Se não for dono, verifica se é membro
+    if (!isOwner) {
+      const member = await dbGet(
+        "SELECT owner_id FROM family_members WHERE member_id = ? OR member_id IN (SELECT id FROM users WHERE email = ?)",
+        [user_id, user_id]
+      );
+      if (member?.owner_id) {
+        ownerId = member.owner_id;
+      } else {
+        return res.json({ family: [], message: "Usuário não pertence a uma família." });
+      }
+    }
+
+    // 🔹 Busca dono
+    const owner = await dbGet("SELECT id, name, email FROM users WHERE id = ?", [ownerId]);
+
+    // 🔹 Busca membros
+    const members = await dbAll(
+      "SELECT fm.id, fm.name, u.email FROM family_members fm LEFT JOIN users u ON fm.member_id = u.id WHERE fm.owner_id = ?",
+      [ownerId]
+    );
+
+    // 🔹 Retorna o grupo completo
+    res.json({
+      owner,
+      members,
+      total: 1 + members.length,
+    });
+  } catch (err) {
+    console.error("❌ Erro ao buscar membros da família:", err);
+    res.status(500).json({ error: "Erro ao buscar membros da família." });
+  }
+});
+
 
 
 // ================== INICIAR SERVIDOR ==================
