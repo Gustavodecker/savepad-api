@@ -239,22 +239,56 @@ app.post("/webhook", async (req, res) => {
 app.get("/status/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
-    const plano = await dbGet(
-      `SELECT * FROM plans
-         WHERE user_id = ?
-         ORDER BY id DESC
-         LIMIT 1`,
-      [user_id]
-    );
 
-    if (!plano)
-      return res.status(404).json({ error: "Plano não encontrado" });
+    // 🔍 Busca o usuário para descobrir o identificador real
+    const user =
+      (await dbGet(`SELECT * FROM users WHERE id = ? OR email = ? OR phone = ?`, [
+        user_id,
+        user_id,
+        user_id,
+      ])) || null;
 
-    res.json(plano);
+    let plano = null;
+
+    if (user) {
+      // tenta pelo identificador usado no plano
+      plano =
+        (await dbGet(
+          `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
+          [user.id]
+        )) ||
+        (await dbGet(
+          `SELECT * FROM plans WHERE user_id LIKE ? ORDER BY id DESC LIMIT 1`,
+          [`%${user.email || user.phone || user.id}%`]
+        ));
+    } else {
+      // fallback direto (para casos em que id é número de telefone)
+      plano =
+        (await dbGet(
+          `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
+          [user_id]
+        )) ||
+        (await dbGet(
+          `SELECT * FROM plans WHERE user_id LIKE ? ORDER BY id DESC LIMIT 1`,
+          [`%${user_id}%`]
+        ));
+    }
+
+    if (!plano) {
+      return res.json({ status: "Sem plano ativo" });
+    }
+
+    res.json({
+      status: plano.status || "Ativo",
+      type: plano.type,
+      user_id: plano.user_id,
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("❌ Erro ao consultar plano:", err);
+    res.status(500).json({ error: "Erro ao consultar plano" });
   }
 });
+
 
 // ================== NOVAS ROTAS: VINCULAÇÃO DE WHATSAPP ==================
 app.post("/api/link-whatsapp", async (req, res) => {
