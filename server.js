@@ -314,33 +314,45 @@ app.get("/api/check-whatsapp-link", async (req, res) => {
 
 // 🔹 Adicionar membro da família
 app.post("/family/add", async (req, res) => {
-  try {
+    try {
     const { owner_id, member_email, name } = req.body;
-    if (!owner_id || !member_email)
-      return res.status(400).json({ error: "Campos obrigatórios ausentes" });
 
-    const member = await dbGet("SELECT * FROM users WHERE email = ?", [member_email]);
-    if (!member)
-      return res.status(404).json({ error: "Usuário não encontrado" });
+    if (!owner_id || !member_email || !name)
+      return res.status(400).json({ error: "Campos obrigatórios ausentes." });
 
-    // Evita duplicidade
-    const existing = await dbGet(
-      "SELECT * FROM family_members WHERE owner_id = ? AND member_id = ?",
+    // 🔹 Verifica se o membro já existe
+    let member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
+
+    // 🔹 Se não existir, cria usuário automaticamente
+    if (!member) {
+      await dbRun(
+        "INSERT INTO users (name, email, created_at) VALUES (?, ?, datetime('now'))",
+        [name, member_email]
+      );
+      member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
+    }
+
+    // 🔹 Verifica se já é membro
+    const exists = await dbGet(
+      "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
       [owner_id, member.id]
     );
-    if (existing)
-      return res.status(409).json({ error: "Este membro já faz parte da família." });
+    if (exists) {
+      return res.json({ message: "Usuário já faz parte da família." });
+    }
 
+    // 🔹 Cria vínculo na tabela de membros
     await dbRun(
       "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
-      [owner_id, member.id, name || member.name]
+      [owner_id, member.id, name]
     );
 
     res.json({ success: true, message: "Membro adicionado com sucesso!" });
   } catch (err) {
     console.error("❌ Erro ao adicionar membro:", err);
-    res.status(500).json({ error: "Erro interno ao adicionar membro." });
+    res.status(500).json({ error: "Erro ao adicionar membro à família." });
   }
+
 });
 
 // 🔹 Listar membros da família
