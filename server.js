@@ -244,23 +244,17 @@ app.get("/status/:user_id", async (req, res) => {
       [user_id, user_id]
     );
 
-    let targetUserId = user_id;
+    // Se for membro, o plano pertence ao dono
+    const targetUserId = member?.owner_id || user_id;
 
-    // Se ele for membro, herda o plano do dono
-    if (member?.owner_id) {
-      targetUserId = member.owner_id;
-    }
-
-    // 🔍 2️⃣ Busca o plano ativo (seja do dono ou dele mesmo)
-    const plano =
-      (await dbGet(
-        `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
-        [targetUserId]
-      )) ||
-      (await dbGet(
-        `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
-        [user_id]
-      ));
+    // 🔍 2️⃣ Busca plano independente do tipo do campo (número ou texto)
+    const plano = await dbGet(
+      `SELECT * FROM plans 
+       WHERE CAST(user_id AS TEXT) = CAST(? AS TEXT) 
+       ORDER BY id DESC 
+       LIMIT 1`,
+      [targetUserId]
+    );
 
     if (!plano) {
       return res.json({ status: "Sem plano ativo" });
@@ -278,7 +272,6 @@ app.get("/status/:user_id", async (req, res) => {
     res.status(500).json({ error: "Erro ao consultar plano" });
   }
 });
-
 
 // ================== VINCULAÇÃO DE WHATSAPP ==================
 app.post("/api/link-whatsapp", async (req, res) => {
