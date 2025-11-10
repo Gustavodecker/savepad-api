@@ -249,27 +249,24 @@ app.get("/status/:user_id", async (req, res) => {
       [user_id, user_id]
     );
 
-    // 🔹 2️⃣ Define o alvo: se for membro, usa o owner_id
     const targetUserId = member?.owner_id || user_id;
 
-    // 🔹 3️⃣ Busca o último plano do usuário-alvo
+    // 🔹 2️⃣ Busca o plano, convertendo user_id para texto para evitar falha de tipo
     const plano = await dbGet(
       `SELECT id, user_id, type, status, mode
          FROM plans
-        WHERE user_id = ?
+        WHERE CAST(user_id AS TEXT) = CAST(? AS TEXT)
         ORDER BY id DESC
         LIMIT 1`,
       [targetUserId]
     );
 
-    // 🔹 4️⃣ Retornos adequados
     if (!plano) {
       return res.json({ status: "Sem plano ativo" });
     }
 
+    // 🔹 Traduz status para o app
     let statusFinal = plano.status;
-
-    // 🔹 Traduz para texto mais amigável
     if (statusFinal === "approved") statusFinal = "Ativo";
     else if (statusFinal === "pending") statusFinal = "Pendente";
     else if (statusFinal === "cancelled") statusFinal = "Cancelado";
