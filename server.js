@@ -237,8 +237,8 @@ app.post("/webhook", async (req, res) => {
 app.get("/status/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
+    console.log("🔍 Recebido user_id:", user_id);
 
-    // 🔹 1️⃣ Verifica se o usuário é membro de uma família
     const member = await dbGet(
       `SELECT owner_id 
          FROM family_members 
@@ -252,35 +252,21 @@ app.get("/status/:user_id", async (req, res) => {
       targetUserId = member.owner_id;
     }
 
-    // 🔹 2️⃣ Busca o plano de todas as formas possíveis
-    const plano =
-      (await dbGet(
-        `SELECT * 
-           FROM plans 
-          WHERE CAST(user_id AS TEXT) = CAST(? AS TEXT)
-          ORDER BY id DESC 
-          LIMIT 1`,
-        [targetUserId]
-      )) ||
-      (await dbGet(
-        `SELECT * 
-           FROM plans 
-          WHERE user_id = ?
-          ORDER BY id DESC 
-          LIMIT 1`,
-        [targetUserId]
-      )) ||
-      (await dbGet(
-        `SELECT * 
-           FROM plans 
-          WHERE user_id LIKE ?
-          ORDER BY id DESC 
-          LIMIT 1`,
-        [`%${targetUserId}%`]
-      ));
+    console.log("🎯 Procurando plano para:", targetUserId);
 
-    // 🔹 3️⃣ Retorno
+    const plano = await dbGet(
+      `SELECT * 
+         FROM plans 
+        WHERE TRIM(user_id) = TRIM(?)
+        ORDER BY id DESC 
+        LIMIT 1`,
+      [String(targetUserId)]
+    );
+
+    console.log("📦 Resultado da query:", plano);
+
     if (!plano) {
+      console.log("⚠️ Nenhum plano encontrado para", targetUserId);
       return res.json({ status: "Sem plano ativo" });
     }
 
@@ -296,7 +282,6 @@ app.get("/status/:user_id", async (req, res) => {
     res.status(500).json({ error: "Erro ao consultar plano" });
   }
 });
-
 
 // ================== VINCULAÇÃO DE WHATSAPP ==================
 app.post("/api/link-whatsapp", async (req, res) => {
