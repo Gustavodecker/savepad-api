@@ -243,32 +243,31 @@ app.get("/status/:user_id", async (req, res) => {
   try {
     let { user_id } = req.params;
 
-    // 🔹 força tipo string pra evitar comparação numérica/textual
-    user_id = String(user_id);
+    // 🔹 remove espaços e força string
+    user_id = String(user_id).trim();
 
-    // 🔹 1️⃣ Verifica se é membro de família
+    // 🔹 busca membro de família (herança)
     const member = await dbGet(
-      "SELECT owner_id FROM family_members WHERE member_id = ? OR member_id IN (SELECT id FROM users WHERE email = ?)",
+      "SELECT owner_id FROM family_members WHERE TRIM(member_id) = ? OR member_id IN (SELECT id FROM users WHERE TRIM(email) = ?)",
       [user_id, user_id]
     );
 
-    const targetUserId = member?.owner_id ? String(member.owner_id) : user_id;
+    const targetUserId = member?.owner_id ? String(member.owner_id).trim() : user_id;
 
-    // 🔹 2️⃣ Busca o plano (LIKE garante match entre texto e número)
+    // 🔹 busca plano flexível (tratando possíveis espaços ou tipos diferentes)
     const plano = await dbGet(
       `SELECT id, user_id, type, status, mode
          FROM plans
-        WHERE user_id LIKE ?
+        WHERE TRIM(user_id) = ? OR CAST(user_id AS TEXT) = ?
         ORDER BY id DESC
         LIMIT 1`,
-      [targetUserId]
+      [targetUserId, targetUserId]
     );
 
     if (!plano) {
       return res.json({ status: "Sem plano ativo" });
     }
 
-    // 🔹 Traduz status para texto
     let statusFinal = plano.status;
     if (statusFinal === "approved") statusFinal = "Ativo";
     else if (statusFinal === "pending") statusFinal = "Pendente";
