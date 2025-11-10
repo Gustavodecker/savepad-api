@@ -22,7 +22,6 @@ const { MercadoPagoConfig, Preference, Payment } = pkg;
 import { notificarBotPagamento } from "./botIntegration.js";
 import bcrypt from "bcrypt";
 
-
 dotenv.config();
 
 // ================== CONFIGURAÇÃO BÁSICA ==================
@@ -106,30 +105,27 @@ app.post("/login", async (req, res) => {
     }
 
     res.json({
-  success: true,
-  message: "Login bem-sucedido!",
-  user: {
-    id: user.id || user.phone || user.email, // 🔹 garante um identificador
-    name: user.name,
-    email: user.email,
-    plan_id: user.plan_id,
-    whatsapp_number: user.whatsapp_number || null
-  }
-});
-
+      success: true,
+      message: "Login bem-sucedido!",
+      user: {
+        id: user.id || user.phone || user.email,
+        name: user.name,
+        email: user.email,
+        plan_id: user.plan_id,
+        whatsapp_number: user.whatsapp_number || null,
+      },
+    });
   } catch (err) {
     console.error("❌ Erro no login:", err);
     res.status(500).json({ error: "Erro interno no servidor." });
   }
 });
 
-
 // ================== GERAR CHECKOUT ==================
 app.post("/checkout", async (req, res) => {
   try {
     const { user_id, plano } = req.body;
 
-    // Planos disponíveis
     const planosDisponiveis = {
       basico: { nome: "SavePad Básico", preco: 10.0, duracaoDias: 30 },
       pro: { nome: "SavePad Pro", preco: 20.0, duracaoDias: 30 },
@@ -160,11 +156,8 @@ app.post("/checkout", async (req, res) => {
     });
 
     const preferenceId = response.id || response.body?.id;
-
-    // Define expiração 30 dias após pagamento
     const expiresAt = dayjs().add(escolhido.duracaoDias, "day").format("YYYY-MM-DD");
 
-    // Grava no banco (campos existentes)
     await dbRun(
       `INSERT INTO plans (user_id, type, expires_at, status)
        VALUES (?, ?, ?, ?)`,
@@ -190,14 +183,12 @@ app.post("/webhook", async (req, res) => {
       return res.status(400).json({ error: "ID de pagamento ausente" });
     }
 
-    console.log("🔔 Webhook recebido:", req.body);
-
     let payment;
     try {
       payment = await new Payment(client).get({ id: paymentId });
     } catch (err) {
       if (err.status === 404) {
-        console.warn("⚠️ Pagamento não encontrado (provavelmente teste do simulador).");
+        console.warn("⚠️ Pagamento não encontrado (teste).");
         return res.status(200).json({ received: true });
       }
       throw err;
@@ -206,9 +197,6 @@ app.post("/webhook", async (req, res) => {
     const status = payment.status;
     const payer_email = payment.payer?.email || "desconhecido";
 
-    console.log(`💰 Pagamento ${paymentId}: ${status} - ${payer_email}`);
-
-    // Atualiza o status do plano no banco (último plano pendente do usuário)
     await dbRun(
       `UPDATE plans
          SET status = ?
@@ -218,13 +206,12 @@ app.post("/webhook", async (req, res) => {
       [status]
     );
 
-    // 🚀 NOVO TRECHO: notifica o bot caso o pagamento seja aprovado
     if (status === "approved") {
       await notificarBotPagamento({
         user_id: payer_email,
         plano: "SavePad Pro",
         status,
-        valor: payment.transaction_amount
+        valor: payment.transaction_amount,
       });
     }
 
@@ -239,29 +226,18 @@ app.post("/webhook", async (req, res) => {
 app.get("/status/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
-
-    // 🔍 1️⃣ Verifica se o usuário é membro de uma família
     const member = await dbGet(
       "SELECT owner_id FROM family_members WHERE member_id = ? OR member_id IN (SELECT id FROM users WHERE email = ?)",
       [user_id, user_id]
     );
-
     let targetUserId = user_id;
+    if (member?.owner_id) targetUserId = member.owner_id;
 
-    // Se ele for membro, herda o plano do dono
-    if (member?.owner_id) {
-      targetUserId = member.owner_id;
-    }
-
-    // 🔍 2️⃣ Busca o plano ativo do dono (ou do próprio usuário)
     const plano = await dbGet(
       `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
       [targetUserId]
     );
-
-    if (!plano) {
-      return res.json({ status: "Sem plano ativo" });
-    }
+    if (!plano) return res.json({ status: "Sem plano ativo" });
 
     res.json({
       status: plano.status || "Ativo",
@@ -276,8 +252,7 @@ app.get("/status/:user_id", async (req, res) => {
   }
 });
 
-
-// ================== NOVAS ROTAS: VINCULAÇÃO DE WHATSAPP ==================
+// ================== VINCULAÇÃO DE WHATSAPP ==================
 app.post("/api/link-whatsapp", async (req, res) => {
   try {
     const { user_id } = req.body;
@@ -285,8 +260,6 @@ app.post("/api/link-whatsapp", async (req, res) => {
 
     const code = "AG-" + crypto.randomInt(100000, 999999);
     await dbRun("UPDATE users SET verification_code = ? WHERE id = ?", [code, user_id]);
-
-    console.log(`🔗 Código gerado para usuário ${user_id}: ${code}`);
     res.json({ code });
   } catch (err) {
     console.error("❌ Erro ao gerar código:", err);
@@ -305,25 +278,19 @@ app.get("/api/check-whatsapp-link", async (req, res) => {
       whatsapp_number: user?.whatsapp_number || null,
     });
   } catch (err) {
-    console.error("❌ Erro ao consultar status de vinculação:", err);
+    console.error("❌ Erro ao consultar vínculo:", err);
     res.status(500).json({ error: "Erro interno ao consultar" });
   }
 });
 
 // ================== PLANOS FAMILIARES ==================
-
-// 🔹 Adicionar membro da família
 app.post("/family/add", async (req, res) => {
-    try {
+  try {
     const { owner_id, member_email, name } = req.body;
-
     if (!owner_id || !member_email || !name)
       return res.status(400).json({ error: "Campos obrigatórios ausentes." });
 
-    // 🔹 Verifica se o membro já existe
     let member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
-
-    // 🔹 Se não existir, cria usuário automaticamente
     if (!member) {
       await dbRun(
         "INSERT INTO users (name, email, created_at) VALUES (?, ?, datetime('now'))",
@@ -332,92 +299,66 @@ app.post("/family/add", async (req, res) => {
       member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
     }
 
-    // 🔹 Verifica se já é membro
     const exists = await dbGet(
       "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
       [owner_id, member.id]
     );
-    if (exists) {
-      return res.json({ message: "Usuário já faz parte da família." });
-    }
+    if (exists) return res.json({ message: "Usuário já faz parte da família." });
 
-    // 🔹 Cria vínculo na tabela de membros
     await dbRun(
       "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
       [owner_id, member.id, name]
     );
-
     res.json({ success: true, message: "Membro adicionado com sucesso!" });
   } catch (err) {
     console.error("❌ Erro ao adicionar membro:", err);
     res.status(500).json({ error: "Erro ao adicionar membro à família." });
   }
-
 });
 
-// 🔹 Listar membros da família
-app.get("/family/:owner_id", async (req, res) => {
-  try {
-    const { owner_id } = req.params;
-    const membros = await dbAll(
-      "SELECT id, name, member_id FROM family_members WHERE owner_id = ?",
-      [owner_id]
-    );
-    res.json(membros);
-  } catch (err) {
-    console.error("❌ Erro ao listar membros:", err);
-    res.status(500).json({ error: "Erro ao listar membros." });
-  }
-});
-
-// ================== CONSULTAR MEMBROS DA FAMÍLIA ==================
+// 🔹 LISTAR MEMBROS DA FAMÍLIA (CORRIGIDA)
 app.get("/family/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
 
-    // 🔹 Verifica se o usuário é dono de família
+    const user =
+      (await dbGet("SELECT * FROM users WHERE id = ?", [user_id])) ||
+      (await dbGet("SELECT * FROM users WHERE email = ?", [user_id]));
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
+
     const isOwner = await dbGet(
-      "SELECT 1 FROM family_members WHERE owner_id = ? LIMIT 1",
-      [user_id]
+      "SELECT * FROM plans WHERE user_id = ? AND mode = 'familiar'",
+      [user.id]
     );
 
-    let ownerId = user_id;
-
-    // 🔹 Se não for dono, verifica se é membro
+    let ownerId = user.id;
     if (!isOwner) {
-      const member = await dbGet(
-        "SELECT owner_id FROM family_members WHERE member_id = ? OR member_id IN (SELECT id FROM users WHERE email = ?)",
-        [user_id, user_id]
+      const relation = await dbGet(
+        "SELECT owner_id FROM family_members WHERE member_id = ?",
+        [user.id]
       );
-      if (member?.owner_id) {
-        ownerId = member.owner_id;
-      } else {
-        return res.json({ family: [], message: "Usuário não pertence a uma família." });
-      }
+      if (relation) ownerId = relation.owner_id;
     }
 
-    // 🔹 Busca dono
     const owner = await dbGet("SELECT id, name, email FROM users WHERE id = ?", [ownerId]);
-
-    // 🔹 Busca membros
     const members = await dbAll(
-      "SELECT fm.id, fm.name, u.email FROM family_members fm LEFT JOIN users u ON fm.member_id = u.id WHERE fm.owner_id = ?",
+      `SELECT fm.id, fm.name, u.email 
+         FROM family_members fm
+         LEFT JOIN users u ON fm.member_id = u.id
+        WHERE fm.owner_id = ?`,
       [ownerId]
     );
 
-    // 🔹 Retorna o grupo completo
     res.json({
       owner,
-      members,
-      total: 1 + members.length,
+      members: members || [],
+      total: (members?.length || 0) + 1,
     });
   } catch (err) {
-    console.error("❌ Erro ao buscar membros da família:", err);
-    res.status(500).json({ error: "Erro ao buscar membros da família." });
+    console.error("❌ Erro ao buscar família:", err);
+    res.status(500).json({ error: "Erro ao carregar membros da família" });
   }
 });
-
-
 
 // ================== INICIAR SERVIDOR ==================
 app.listen(PORT, () => {
