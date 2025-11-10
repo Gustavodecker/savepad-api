@@ -183,12 +183,14 @@ app.post("/webhook", async (req, res) => {
       return res.status(400).json({ error: "ID de pagamento ausente" });
     }
 
+    console.log("🔔 Webhook recebido:", req.body);
+
     let payment;
     try {
       payment = await new Payment(client).get({ id: paymentId });
     } catch (err) {
       if (err.status === 404) {
-        console.warn("⚠️ Pagamento não encontrado (teste).");
+        console.warn("⚠️ Pagamento não encontrado (teste ou simulação).");
         return res.status(200).json({ received: true });
       }
       throw err;
@@ -197,15 +199,22 @@ app.post("/webhook", async (req, res) => {
     const status = payment.status;
     const payer_email = payment.payer?.email || "desconhecido";
 
+    console.log(`💰 Pagamento ${paymentId}: ${status} - ${payer_email}`);
+
+    // ✅ Atualiza SOMENTE o plano do usuário correto
     await dbRun(
       `UPDATE plans
          SET status = ?
-       WHERE status = 'pending'
+       WHERE user_id IN (
+         SELECT id FROM users WHERE email = ? OR id = ?
+       )
+       AND status = 'pending'
        ORDER BY id DESC
        LIMIT 1`,
-      [status]
+      [status, payer_email, payer_email]
     );
 
+    // 🚀 Notifica o bot apenas se o pagamento for aprovado
     if (status === "approved") {
       await notificarBotPagamento({
         user_id: payer_email,
@@ -215,12 +224,14 @@ app.post("/webhook", async (req, res) => {
       });
     }
 
+    console.log("✅ Webhook processado com sucesso.");
     res.status(200).json({ received: true });
   } catch (err) {
     console.error("❌ Erro no webhook:", err);
     res.status(500).json({ error: "Erro interno no servidor" });
   }
 });
+
 
 // ================== CONSULTAR STATUS DO PLANO ==================
 app.get("/status/:user_id", async (req, res) => {
