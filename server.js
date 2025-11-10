@@ -190,7 +190,7 @@ app.post("/webhook", async (req, res) => {
       payment = await new Payment(client).get({ id: paymentId });
     } catch (err) {
       if (err.status === 404) {
-        console.warn("⚠️ Pagamento não encontrado (teste ou simulação).");
+        console.warn("⚠️ Pagamento não encontrado (teste).");
         return res.status(200).json({ received: true });
       }
       throw err;
@@ -201,36 +201,41 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`💰 Pagamento ${paymentId}: ${status} - ${payer_email}`);
 
-    // ✅ Atualiza SOMENTE o plano do usuário correto
+    // 🔹 Localiza o usuário pelo email do pagador
+    const user = await dbGet("SELECT id FROM users WHERE email = ?", [payer_email]);
+
+    if (!user) {
+      console.warn(`⚠️ Nenhum usuário encontrado com email ${payer_email}`);
+      return res.status(200).json({ received: true });
+    }
+
+    // 🔹 Atualiza o plano específico desse usuário
     await dbRun(
       `UPDATE plans
          SET status = ?
-       WHERE user_id IN (
-         SELECT id FROM users WHERE email = ? OR id = ?
-       )
-       AND status = 'pending'
-       ORDER BY id DESC
-       LIMIT 1`,
-      [status, payer_email, payer_email]
+       WHERE user_id = ? AND status = 'pending'`,
+      [status, user.id]
     );
 
-    // 🚀 Notifica o bot apenas se o pagamento for aprovado
+    console.log(`✅ Plano do usuário ${user.id} atualizado para: ${status}`);
+
+    // 🔹 Notifica o bot se o pagamento for aprovado
     if (status === "approved") {
       await notificarBotPagamento({
-        user_id: payer_email,
+        user_id: user.id,
         plano: "SavePad Pro",
         status,
         valor: payment.transaction_amount,
       });
     }
 
-    console.log("✅ Webhook processado com sucesso.");
     res.status(200).json({ received: true });
   } catch (err) {
     console.error("❌ Erro no webhook:", err);
     res.status(500).json({ error: "Erro interno no servidor" });
   }
 });
+
 
 
 // ================== CONSULTAR STATUS DO PLANO ==================
