@@ -241,21 +241,24 @@ app.post("/webhook", async (req, res) => {
 // ================== CONSULTAR STATUS DO PLANO ==================
 app.get("/status/:user_id", async (req, res) => {
   try {
-    const { user_id } = req.params;
+    let { user_id } = req.params;
 
-    // 🔹 1️⃣ Verifica se o usuário é membro de uma família
+    // 🔹 força tipo string pra evitar comparação numérica/textual
+    user_id = String(user_id);
+
+    // 🔹 1️⃣ Verifica se é membro de família
     const member = await dbGet(
       "SELECT owner_id FROM family_members WHERE member_id = ? OR member_id IN (SELECT id FROM users WHERE email = ?)",
       [user_id, user_id]
     );
 
-    const targetUserId = member?.owner_id || user_id;
+    const targetUserId = member?.owner_id ? String(member.owner_id) : user_id;
 
-    // 🔹 2️⃣ Busca o plano, convertendo user_id para texto para evitar falha de tipo
+    // 🔹 2️⃣ Busca o plano (LIKE garante match entre texto e número)
     const plano = await dbGet(
       `SELECT id, user_id, type, status, mode
          FROM plans
-        WHERE CAST(user_id AS TEXT) = CAST(? AS TEXT)
+        WHERE user_id LIKE ?
         ORDER BY id DESC
         LIMIT 1`,
       [targetUserId]
@@ -265,7 +268,7 @@ app.get("/status/:user_id", async (req, res) => {
       return res.json({ status: "Sem plano ativo" });
     }
 
-    // 🔹 Traduz status para o app
+    // 🔹 Traduz status para texto
     let statusFinal = plano.status;
     if (statusFinal === "approved") statusFinal = "Ativo";
     else if (statusFinal === "pending") statusFinal = "Pendente";
@@ -283,7 +286,6 @@ app.get("/status/:user_id", async (req, res) => {
     res.status(500).json({ error: "Erro ao consultar plano" });
   }
 });
-
 
 // ================== VINCULAÇÃO DE WHATSAPP ==================
 app.post("/api/link-whatsapp", async (req, res) => {
