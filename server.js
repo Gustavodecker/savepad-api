@@ -246,22 +246,39 @@ app.get("/status/:user_id", async (req, res) => {
 
     console.log(`📥 [STATUS] Requisição recebida para user_id=${userIdStr}`);
 
-    // 🔹 Verifica se o usuário é membro de uma família
-    const member = await dbGet(
-      `SELECT owner_id 
-         FROM family_members 
-        WHERE CAST(member_id AS TEXT) = ? 
-           OR member_id IN (SELECT id FROM users WHERE email = ?)`,
-      [userIdStr, userIdStr]
+    // 🔹 Verifica se o usuário é membro de uma família (e normaliza owner_id)
+const member = await dbGet(
+  `SELECT owner_id 
+     FROM family_members 
+    WHERE CAST(member_id AS TEXT) = ? 
+       OR member_id IN (SELECT id FROM users WHERE email = ?)`,
+  [userIdStr, userIdStr]
+);
+
+console.log("👨‍👩‍👧 Verificação de vínculo familiar:", member);
+
+let targetUserId = userIdStr;
+
+if (member?.owner_id) {
+  // Se o owner_id for um e-mail, tenta buscar o ID correspondente
+  if (isNaN(member.owner_id)) {
+    const ownerRow = await dbGet(
+      "SELECT id FROM users WHERE email = ?",
+      [member.owner_id]
     );
+    if (ownerRow?.id) {
+      targetUserId = String(ownerRow.id);
+      console.log(`📧 Owner ID convertido de e-mail para ID numérico: ${targetUserId}`);
+    } else {
+      console.warn(`⚠️ Nenhum usuário encontrado com email ${member.owner_id}`);
+    }
+  } else {
+    targetUserId = String(member.owner_id);
+  }
+}
 
-    console.log("👨‍👩‍👧 Verificação de vínculo familiar:", member);
+console.log(`🎯 Consultando plano do usuário alvo: ${targetUserId}`);
 
-    const targetUserId = member?.owner_id
-      ? String(member.owner_id).trim()
-      : userIdStr;
-
-    console.log(`🎯 Consultando plano do usuário alvo: ${targetUserId}`);
 
     // 🔹 Busca o plano de forma segura (comparando como texto e número)
     const plano = await dbGet(
