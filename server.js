@@ -241,24 +241,28 @@ app.post("/webhook", async (req, res) => {
 // ================== CONSULTAR STATUS DO PLANO ==================
 app.get("/status/:user_id", async (req, res) => {
   try {
-    let { user_id } = req.params;
+    const { user_id } = req.params;
+    const userIdStr = String(user_id).trim();
 
-    // 🔹 remove espaços e força string
-    user_id = String(user_id).trim();
-
-    // 🔹 busca membro de família (herança)
+    // 🔹 Verifica se o usuário é membro de uma família
     const member = await dbGet(
-      "SELECT owner_id FROM family_members WHERE TRIM(member_id) = ? OR member_id IN (SELECT id FROM users WHERE TRIM(email) = ?)",
-      [user_id, user_id]
+      `SELECT owner_id 
+         FROM family_members 
+        WHERE CAST(member_id AS TEXT) = ? 
+           OR member_id IN (SELECT id FROM users WHERE email = ?)`,
+      [userIdStr, userIdStr]
     );
 
-    const targetUserId = member?.owner_id ? String(member.owner_id).trim() : user_id;
+    const targetUserId = member?.owner_id
+      ? String(member.owner_id).trim()
+      : userIdStr;
 
-    // 🔹 busca plano flexível (tratando possíveis espaços ou tipos diferentes)
+    // 🔹 Busca o plano de forma segura (comparando como texto e número)
     const plano = await dbGet(
       `SELECT id, user_id, type, status, mode
          FROM plans
-        WHERE TRIM(user_id) = ? OR CAST(user_id AS TEXT) = ?
+        WHERE CAST(user_id AS TEXT) = ?
+           OR user_id = ?
         ORDER BY id DESC
         LIMIT 1`,
       [targetUserId, targetUserId]
@@ -268,6 +272,7 @@ app.get("/status/:user_id", async (req, res) => {
       return res.json({ status: "Sem plano ativo" });
     }
 
+    // 🔹 Traduz status para texto
     let statusFinal = plano.status;
     if (statusFinal === "approved") statusFinal = "Ativo";
     else if (statusFinal === "pending") statusFinal = "Pendente";
@@ -278,13 +283,14 @@ app.get("/status/:user_id", async (req, res) => {
       type: plano.type,
       mode: plano.mode,
       owner_id: targetUserId,
-      user_id,
+      user_id: userIdStr,
     });
   } catch (err) {
     console.error("❌ Erro ao consultar plano:", err);
     res.status(500).json({ error: "Erro ao consultar plano" });
   }
 });
+
 
 // ================== VINCULAÇÃO DE WHATSAPP ==================
 app.post("/api/link-whatsapp", async (req, res) => {
