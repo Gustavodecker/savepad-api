@@ -249,31 +249,20 @@ app.get("/status/:user_id", async (req, res) => {
 
     let targetUserId = user_id;
 
-    // Se ele for membro de uma família, busca o plano do dono
+    // Se for membro, usa o plano do dono
     if (member?.owner_id) {
       targetUserId = member.owner_id;
     }
 
-    // 2️⃣ Busca plano por número, texto e e-mail (cobre todas as possibilidades)
-    const plano =
-      (await dbGet(
-        `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
-        [parseInt(targetUserId)]
-      )) ||
-      (await dbGet(
-        `SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
-        [targetUserId.toString()]
-      )) ||
-      (await dbGet(
-        `SELECT p.* 
-           FROM plans p 
-           JOIN users u 
-             ON p.user_id = u.id OR p.user_id = u.email 
-          WHERE u.id = ? OR u.email = ?
-          ORDER BY p.id DESC 
-          LIMIT 1`,
-        [targetUserId, targetUserId]
-      ));
+    // 2️⃣ Busca o plano forçando comparação textual
+    const plano = await dbGet(
+      `SELECT * 
+         FROM plans 
+        WHERE CAST(user_id AS TEXT) = CAST(? AS TEXT) 
+        ORDER BY id DESC 
+        LIMIT 1`,
+      [targetUserId]
+    );
 
     if (!plano) {
       return res.json({ status: "Sem plano ativo" });
@@ -291,7 +280,6 @@ app.get("/status/:user_id", async (req, res) => {
     res.status(500).json({ error: "Erro ao consultar plano" });
   }
 });
-
 
 // ================== VINCULAÇÃO DE WHATSAPP ==================
 app.post("/api/link-whatsapp", async (req, res) => {
