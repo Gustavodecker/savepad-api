@@ -316,6 +316,59 @@ app.post("/family/add", async (req, res) => {
   }
 });
 
+// 🔹 Remover membro da família (somente o dono pode remover)
+app.delete("/family/remove", async (req, res) => {
+  try {
+    const { owner_id, member_id } = req.body;
+    if (!owner_id || !member_id)
+      return res.status(400).json({ error: "Campos obrigatórios ausentes." });
+
+    const exists = await dbGet(
+      "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
+      [owner_id, member_id]
+    );
+
+    if (!exists)
+      return res.status(404).json({ error: "Membro não encontrado na família." });
+
+    await dbRun(
+      "DELETE FROM family_members WHERE owner_id = ? AND member_id = ?",
+      [owner_id, member_id]
+    );
+
+    res.json({ success: true, message: "Membro removido com sucesso." });
+  } catch (err) {
+    console.error("❌ Erro ao remover membro:", err);
+    res.status(500).json({ error: "Erro ao remover membro da família." });
+  }
+});
+
+// 🔹 Membro sai por conta própria do plano familiar
+app.delete("/family/leave", async (req, res) => {
+  try {
+    const { member_id } = req.body;
+    if (!member_id)
+      return res.status(400).json({ error: "member_id obrigatório." });
+
+    const relation = await dbGet(
+      "SELECT * FROM family_members WHERE member_id = ?",
+      [member_id]
+    );
+
+    if (!relation)
+      return res.status(404).json({ error: "Usuário não faz parte de uma família." });
+
+    await dbRun("DELETE FROM family_members WHERE member_id = ?", [member_id]);
+
+    res.json({ success: true, message: "Você saiu do plano familiar." });
+  } catch (err) {
+    console.error("❌ Erro ao sair da família:", err);
+    res.status(500).json({ error: "Erro ao sair do plano familiar." });
+  }
+});
+
+
+
 // 🔹 LISTAR MEMBROS DA FAMÍLIA (CORRIGIDA)
 app.get("/family/:user_id", async (req, res) => {
   try {
