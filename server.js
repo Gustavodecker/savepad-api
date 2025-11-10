@@ -238,11 +238,13 @@ app.post("/webhook", async (req, res) => {
 
 
 
-// ================== CONSULTAR STATUS DO PLANO ==================
+// ================== CONSULTAR STATUS DO PLANO (com logs detalhados) ==================
 app.get("/status/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
     const userIdStr = String(user_id).trim();
+
+    console.log(`📥 [STATUS] Requisição recebida para user_id=${userIdStr}`);
 
     // 🔹 Verifica se o usuário é membro de uma família
     const member = await dbGet(
@@ -253,9 +255,13 @@ app.get("/status/:user_id", async (req, res) => {
       [userIdStr, userIdStr]
     );
 
+    console.log("👨‍👩‍👧 Verificação de vínculo familiar:", member);
+
     const targetUserId = member?.owner_id
       ? String(member.owner_id).trim()
       : userIdStr;
+
+    console.log(`🎯 Consultando plano do usuário alvo: ${targetUserId}`);
 
     // 🔹 Busca o plano de forma segura (comparando como texto e número)
     const plano = await dbGet(
@@ -268,7 +274,10 @@ app.get("/status/:user_id", async (req, res) => {
       [targetUserId, targetUserId]
     );
 
+    console.log("📄 Resultado do plano encontrado:", plano);
+
     if (!plano) {
+      console.log(`🚫 Nenhum plano encontrado para user_id=${targetUserId}`);
       return res.json({ status: "Sem plano ativo" });
     }
 
@@ -277,6 +286,8 @@ app.get("/status/:user_id", async (req, res) => {
     if (statusFinal === "approved") statusFinal = "Ativo";
     else if (statusFinal === "pending") statusFinal = "Pendente";
     else if (statusFinal === "cancelled") statusFinal = "Cancelado";
+
+    console.log(`✅ Status final para ${targetUserId}: ${statusFinal}`);
 
     res.json({
       status: statusFinal,
