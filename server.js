@@ -476,26 +476,46 @@ app.post("/family/add", async (req, res) => {
   }
 });
 
+// 🔹 Remover membro da família (somente o dono pode remover)
 app.delete("/family/remove", async (req, res) => {
   try {
     const { owner_id, member_id } = req.body;
-    if (!owner_id || !member_id)
+
+    if (!owner_id || !member_id) {
       return res.status(400).json({ error: "Campos obrigatórios ausentes." });
+    }
 
-    const exists = await dbGet(
-      "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
+    // 🔒 Verifica se o solicitante é realmente dono de um plano familiar ativo
+    const ownerPlan = await dbGet(
+      "SELECT * FROM plans WHERE user_id = ? AND mode = 'familiar' AND status = 'approved'",
+      [owner_id]
+    );
+
+    if (!ownerPlan) {
+      return res.status(403).json({
+        error: "Apenas o dono de um plano familiar ativo pode remover membros.",
+      });
+    }
+
+    // 🔍 Verifica se o membro realmente pertence ao grupo familiar do dono
+    const memberRelation = await dbGet(
+      "SELECT * FROM family_members WHERE owner_id = ? AND member_id = ?",
       [owner_id, member_id]
     );
 
-    if (!exists)
+    if (!memberRelation) {
       return res.status(404).json({ error: "Membro não encontrado na família." });
+    }
 
-    await dbRun(
-      "DELETE FROM family_members WHERE owner_id = ? AND member_id = ?",
-      [owner_id, member_id]
-    );
+    // 🗑️ Remove o membro da família
+    await dbRun("DELETE FROM family_members WHERE owner_id = ? AND member_id = ?", [
+      owner_id,
+      member_id,
+    ]);
 
-    res.json({ success: true, message: "Membro removido com sucesso." });
+    console.log(`👤 Membro ${member_id} removido com sucesso pelo owner ${owner_id}`);
+
+    res.json({ success: true, message: "Membro removido com sucesso!" });
   } catch (err) {
     console.error("❌ Erro ao remover membro:", err);
     res.status(500).json({ error: "Erro ao remover membro da família." });
