@@ -18,6 +18,7 @@ import dayjs from "dayjs";
 import cors from "cors";
 import pkg from "mercadopago";
 import crypto from "crypto";
+import fetch from "node-fetch"; // 🔹 necessário para preapproval
 const { MercadoPagoConfig, Preference, Payment } = pkg;
 import { notificarBotPagamento } from "./botIntegration.js";
 import bcrypt from "bcrypt";
@@ -121,29 +122,72 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// ================== GERAR CHECKOUT ==================
+
+// ================== GERAR CHECKOUT (Mensal Recorrente / Anual Único) ==================
 app.post("/checkout", async (req, res) => {
   try {
-    const { user_id, plano } = req.body;
+    const { user_id, plano, recorrencia } = req.body;
 
     const planosDisponiveis = {
-      basico: { nome: "SavePad Básico", preco: 10.0, duracaoDias: 30 },
-      pro: { nome: "SavePad Pro", preco: 20.0, duracaoDias: 30 },
+      basico: { nome: "SavePad Básico", preco: 10.0 },
+      pro: { nome: "SavePad Pro", preco: 20.0 },
+      familiar: { nome: "SavePad Familiar", preco: 40.0 },
     };
 
     const escolhido = planosDisponiveis[plano];
-    if (!escolhido)
-      return res.status(400).json({ error: "Plano inválido" });
+    if (!escolhido) return res.status(400).json({ error: "Plano inválido" });
 
+    // 🔸 Caso MENSAL (assinatura recorrente)
+    if (recorrencia === "mensal") {
+      const body = {
+        reason: `${escolhido.nome} - Assinatura Mensal`,
+        auto_recurring: {
+          frequency: 1,
+          frequency_type: "months",
+          transaction_amount: escolhido.preco,
+          currency_id: "BRL",
+          start_date: new Date().toISOString(),
+          end_date: new Date(new Date().setFullYear(new Date().getFullYear() + 3)).toISOString(),
+        },
+        back_url: `${BASE_URL}/pagamento-sucesso`,
+        payer_email: `${user_id}@savepad.fake`,
+      };
+
+      const resp = await fetch("https://api.mercadopago.com/preapproval", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.MERCADO_PAGO_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = await resp.json();
+      console.log("💳 Assinatura mensal criada:", data);
+
+      await dbRun(
+        `INSERT INTO plans (user_id, type, status, mode, preapproval_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [user_id, plano, "pending", "individual", data.id]
+      );
+
+      return res.json({
+        checkout_url: data.init_point || data.sandbox_init_point,
+        preference_id: data.id,
+        recorrencia: "mensal",
+      });
+    }
+
+    // 🔸 Caso ANUAL (pagamento único)
     const preference = new Preference(client);
     const response = await preference.create({
       body: {
         items: [
           {
-            title: escolhido.nome,
+            title: `${escolhido.nome} - Assinatura Anual`,
             quantity: 1,
             currency_id: "BRL",
-            unit_price: escolhido.preco,
+            unit_price: escolhido.preco * 10,
           },
         ],
         back_urls: {
@@ -156,21 +200,61 @@ app.post("/checkout", async (req, res) => {
     });
 
     const preferenceId = response.id || response.body?.id;
-    const expiresAt = dayjs().add(escolhido.duracaoDias, "day").format("YYYY-MM-DD");
+    const expiresAt = dayjs().add(365, "day").format("YYYY-MM-DD");
 
     await dbRun(
-      `INSERT INTO plans (user_id, type, expires_at, status)
-       VALUES (?, ?, ?, ?)`,
-      [user_id, plano, expiresAt, "pending"]
+      `INSERT INTO plans (user_id, type, expires_at, status, mode)
+       VALUES (?, ?, ?, ?, ?)`,
+      [user_id, plano, expiresAt, "pending", "individual"]
     );
 
     res.json({
       checkout_url: response.init_point || response.body?.init_point,
       preference_id: preferenceId,
+      recorrencia: "anual",
     });
   } catch (err) {
     console.error("❌ Erro ao criar checkout:", err);
     res.status(500).json({ error: "Erro interno ao criar pagamento" });
+  }
+});
+
+
+// ================== CANCELAR PLANO ==================
+app.post("/cancel-plan", async (req, res) => {
+  try {
+    const { user_id } = req.body;
+    if (!user_id) return res.status(400).json({ error: "user_id obrigatório" });
+
+    const plano = await dbGet(
+      "SELECT * FROM plans WHERE user_id = ? AND status = 'approved' ORDER BY id DESC LIMIT 1",
+      [user_id]
+    );
+
+    if (!plano) return res.status(404).json({ error: "Nenhum plano ativo encontrado." });
+
+    // 🔸 Cancela assinatura recorrente no Mercado Pago (se existir)
+    if (plano.preapproval_id) {
+      await fetch(`https://api.mercadopago.com/preapproval/${plano.preapproval_id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${process.env.MERCADO_PAGO_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: "cancelled" }),
+      });
+      console.log(`🛑 Assinatura Mercado Pago cancelada: ${plano.preapproval_id}`);
+    }
+
+    await dbRun(`UPDATE plans SET status = 'cancelled' WHERE id = ?`, [plano.id]);
+    await dbRun(`DELETE FROM family_members WHERE owner_id = ?`, [user_id]);
+
+    console.log(`❌ Plano cancelado localmente para user_id=${user_id}`);
+
+    res.json({ success: true, message: "Assinatura cancelada com sucesso." });
+  } catch (err) {
+    console.error("❌ Erro ao cancelar plano:", err);
+    res.status(500).json({ error: "Erro interno ao cancelar o plano." });
   }
 });
 
@@ -237,7 +321,6 @@ app.post("/webhook", async (req, res) => {
 });
 
 
-
 // ================== CONSULTAR STATUS DO PLANO (com logs detalhados) ==================
 app.get("/status/:user_id", async (req, res) => {
   try {
@@ -247,40 +330,37 @@ app.get("/status/:user_id", async (req, res) => {
     console.log(`📥 [STATUS] Requisição recebida para user_id=${userIdStr}`);
 
     // 🔹 Verifica se o usuário é membro de uma família (e normaliza owner_id)
-const member = await dbGet(
-  `SELECT owner_id 
-     FROM family_members 
-    WHERE CAST(member_id AS TEXT) = ? 
-       OR member_id IN (SELECT id FROM users WHERE email = ?)`,
-  [userIdStr, userIdStr]
-);
-
-console.log("👨‍👩‍👧 Verificação de vínculo familiar:", member);
-
-let targetUserId = userIdStr;
-
-if (member?.owner_id) {
-  // Se o owner_id for um e-mail, tenta buscar o ID correspondente
-  if (isNaN(member.owner_id)) {
-    const ownerRow = await dbGet(
-      "SELECT id FROM users WHERE email = ?",
-      [member.owner_id]
+    const member = await dbGet(
+      `SELECT owner_id 
+         FROM family_members 
+        WHERE CAST(member_id AS TEXT) = ? 
+           OR member_id IN (SELECT id FROM users WHERE email = ?)`,
+      [userIdStr, userIdStr]
     );
-    if (ownerRow?.id) {
-      targetUserId = String(ownerRow.id);
-      console.log(`📧 Owner ID convertido de e-mail para ID numérico: ${targetUserId}`);
-    } else {
-      console.warn(`⚠️ Nenhum usuário encontrado com email ${member.owner_id}`);
+
+    console.log("👨‍👩‍👧 Verificação de vínculo familiar:", member);
+
+    let targetUserId = userIdStr;
+
+    if (member?.owner_id) {
+      if (isNaN(member.owner_id)) {
+        const ownerRow = await dbGet(
+          "SELECT id FROM users WHERE email = ?",
+          [member.owner_id]
+        );
+        if (ownerRow?.id) {
+          targetUserId = String(ownerRow.id);
+          console.log(`📧 Owner ID convertido de e-mail para ID numérico: ${targetUserId}`);
+        } else {
+          console.warn(`⚠️ Nenhum usuário encontrado com email ${member.owner_id}`);
+        }
+      } else {
+        targetUserId = String(member.owner_id);
+      }
     }
-  } else {
-    targetUserId = String(member.owner_id);
-  }
-}
 
-console.log(`🎯 Consultando plano do usuário alvo: ${targetUserId}`);
+    console.log(`🎯 Consultando plano do usuário alvo: ${targetUserId}`);
 
-
-    // 🔹 Busca o plano de forma segura (comparando como texto e número)
     const plano = await dbGet(
       `SELECT id, user_id, type, status, mode
          FROM plans
@@ -298,7 +378,6 @@ console.log(`🎯 Consultando plano do usuário alvo: ${targetUserId}`);
       return res.json({ status: "Sem plano ativo" });
     }
 
-    // 🔹 Traduz status para texto
     let statusFinal = plano.status;
     if (statusFinal === "approved") statusFinal = "Ativo";
     else if (statusFinal === "pending") statusFinal = "Pendente";
@@ -351,6 +430,7 @@ app.get("/api/check-whatsapp-link", async (req, res) => {
   }
 });
 
+
 // ================== PLANOS FAMILIARES ==================
 app.post("/family/add", async (req, res) => {
   try {
@@ -358,11 +438,9 @@ app.post("/family/add", async (req, res) => {
     if (!owner_id || !member_email || !name)
       return res.status(400).json({ error: "Campos obrigatórios ausentes." });
 
-    // 🔒 Impede o dono de adicionar a si mesmo
     const owner = await dbGet("SELECT id, email FROM users WHERE id = ?", [owner_id]);
-    if (!owner) {
+    if (!owner)
       return res.status(404).json({ error: "Dono do plano não encontrado." });
-    }
 
     if (owner.email.trim().toLowerCase() === member_email.trim().toLowerCase()) {
       return res
@@ -370,7 +448,6 @@ app.post("/family/add", async (req, res) => {
         .json({ error: "Você não pode se adicionar como membro da sua própria família." });
     }
 
-    // 🔍 Verifica se o membro já existe
     let member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
     if (!member) {
       await dbRun(
@@ -380,7 +457,6 @@ app.post("/family/add", async (req, res) => {
       member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
     }
 
-    // 🔁 Evita duplicidade
     const exists = await dbGet(
       "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
       [owner_id, member.id]
@@ -388,7 +464,6 @@ app.post("/family/add", async (req, res) => {
     if (exists)
       return res.json({ message: "Usuário já faz parte da família." });
 
-    // ✅ Adiciona o novo membro
     await dbRun(
       "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
       [owner_id, member.id, name]
@@ -401,8 +476,6 @@ app.post("/family/add", async (req, res) => {
   }
 });
 
-
-// 🔹 Remover membro da família (somente o dono pode remover)
 app.delete("/family/remove", async (req, res) => {
   try {
     const { owner_id, member_id } = req.body;
@@ -429,7 +502,6 @@ app.delete("/family/remove", async (req, res) => {
   }
 });
 
-// 🔹 Membro sai por conta própria do plano familiar
 app.delete("/family/leave", async (req, res) => {
   try {
     const { member_id } = req.body;
@@ -453,9 +525,6 @@ app.delete("/family/leave", async (req, res) => {
   }
 });
 
-
-
-// 🔹 LISTAR MEMBROS DA FAMÍLIA (CORRIGIDA)
 app.get("/family/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
