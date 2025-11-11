@@ -502,6 +502,7 @@ app.delete("/family/remove", async (req, res) => {
   }
 });
 
+
 app.delete("/family/leave", async (req, res) => {
   try {
     const { member_id } = req.body;
