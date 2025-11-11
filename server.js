@@ -358,6 +358,19 @@ app.post("/family/add", async (req, res) => {
     if (!owner_id || !member_email || !name)
       return res.status(400).json({ error: "Campos obrigatórios ausentes." });
 
+    // 🔒 Impede o dono de adicionar a si mesmo
+    const owner = await dbGet("SELECT id, email FROM users WHERE id = ?", [owner_id]);
+    if (!owner) {
+      return res.status(404).json({ error: "Dono do plano não encontrado." });
+    }
+
+    if (owner.email.trim().toLowerCase() === member_email.trim().toLowerCase()) {
+      return res
+        .status(400)
+        .json({ error: "Você não pode se adicionar como membro da sua própria família." });
+    }
+
+    // 🔍 Verifica se o membro já existe
     let member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
     if (!member) {
       await dbRun(
@@ -367,22 +380,27 @@ app.post("/family/add", async (req, res) => {
       member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
     }
 
+    // 🔁 Evita duplicidade
     const exists = await dbGet(
       "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
       [owner_id, member.id]
     );
-    if (exists) return res.json({ message: "Usuário já faz parte da família." });
+    if (exists)
+      return res.json({ message: "Usuário já faz parte da família." });
 
+    // ✅ Adiciona o novo membro
     await dbRun(
       "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
       [owner_id, member.id, name]
     );
+
     res.json({ success: true, message: "Membro adicionado com sucesso!" });
   } catch (err) {
     console.error("❌ Erro ao adicionar membro:", err);
     res.status(500).json({ error: "Erro ao adicionar membro à família." });
   }
 });
+
 
 // 🔹 Remover membro da família (somente o dono pode remover)
 app.delete("/family/remove", async (req, res) => {
