@@ -531,13 +531,18 @@ app.get("/family/:user_id", async (req, res) => {
     }
 
     const owner = await dbGet("SELECT id, name, email FROM users WHERE id = ?", [ownerId]);
-   const members = await dbAll(
-  `SELECT fm.member_id, fm.name, u.email 
-     FROM family_members fm
-     LEFT JOIN users u ON fm.member_id = u.id
-    WHERE fm.owner_id = ?`,
+ const members = await dbAll(
+  `SELECT 
+     fm.member_id AS id, 
+     fm.name, 
+     u.email, 
+     u.whatsapp_number
+   FROM family_members fm
+   LEFT JOIN users u ON fm.member_id = u.id
+   WHERE fm.owner_id = ?`,
   [ownerId]
 );
+
 
     res.json({
       owner,
