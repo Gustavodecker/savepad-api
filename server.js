@@ -22,6 +22,8 @@ import fetch from "node-fetch"; // 🔹 necessário para preapproval
 const { MercadoPagoConfig, Preference, Payment } = pkg;
 import { notificarBotPagamento } from "./botIntegration.js";
 import bcrypt from "bcrypt";
+import { setupFamilyRoutes } from "./familyRoutes.js";
+
 
 dotenv.config();
 
