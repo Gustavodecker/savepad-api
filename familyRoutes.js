@@ -77,8 +77,16 @@ export function setupFamilyRoutes(app, dbGet, dbRun) {
         [owner_id, member?.id || null, name]
       );
 
+      // 🔹 Normaliza o número de telefone
+let normalizedPhone = phone.replace(/\D/g, ""); // remove traços, espaços, parênteses
+if (!normalizedPhone.startsWith("55")) {
+  normalizedPhone = "55" + normalizedPhone;
+}
+
+
       // Envia o convite via bot
-      await notifyBot(phone, name, owner.name, "invited_external");
+     await notifyBot(normalizedPhone, name, owner.name, "invited_external");
+
 
       res.json({ success: true, message: "Convite enviado com sucesso!" });
     } catch (err) {
