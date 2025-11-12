@@ -438,6 +438,7 @@ app.get("/api/check-whatsapp-link", async (req, res) => {
 
 
 app.delete("/family/remove", async (req, res) => {
+  console.log("📡 [DELETE] /family/remove - Body recebido:", req.body);
   try {
     const { owner_id, member_id } = req.body;
     if (!owner_id || !member_id)
