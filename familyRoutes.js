@@ -34,9 +34,14 @@ export function setupFamilyRoutes(app, dbGet, dbRun) {
   // =====================================================
   // Rota para adicionar um novo membro à família
   // =====================================================
- app.post("/family/add", async (req, res) => {
-  console.log("📥 /family/add recebido:", req.body);
-  const { owner_id, name, phone } = req.body;
+ app.use((req, res, next) => {
+  if (req.url.includes("/family/add")) {
+    console.log("📡 [POST] /family/add - Body recebido:");
+    console.log(req.body);
+  }
+  next();
+});
+
 
 
 
