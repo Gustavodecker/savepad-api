@@ -34,8 +34,10 @@ export function setupFamilyRoutes(app, dbGet, dbRun) {
   // =====================================================
   // Rota para adicionar um novo membro à família
   // =====================================================
-  app.post("/family/add", async (req, res) => {
-    const { owner_id, name, phone } = req.body;
+ app.post("/family/add", async (req, res) => {
+  console.log("📥 /family/add recebido:", req.body);
+  const { owner_id, name, phone } = req.body;
+
 
     if (!owner_id || !name || !phone) {
       return res.status(400).json({ error: "Campos obrigatórios: owner_id, name, phone" });
