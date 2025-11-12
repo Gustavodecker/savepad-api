@@ -31,71 +31,91 @@ async function notifyBot(phone, name, ownerName, action) {
  * @param {Function} dbRun Função async para INSERT/UPDATE
  */
 export function setupFamilyRoutes(app, dbGet, dbRun) {
+
+  // =====================================================
+  // Middleware de log para capturar o body recebido
+  // =====================================================
+  app.use((req, res, next) => {
+    if (req.url.includes("/family/add")) {
+      console.log("📡 [POST] /family/add - Body recebido:");
+      console.log(req.body);
+    }
+    next();
+  });
+
   // =====================================================
   // Rota para adicionar um novo membro à família
   // =====================================================
- app.use((req, res, next) => {
-  if (req.url.includes("/family/add")) {
-    console.log("📡 [POST] /family/add - Body recebido:");
-    console.log(req.body);
-  }
-  next();
-});
+  app.post("/family/add", async (req, res) => {
+    try {
+      const { owner_id, name, phone } = req.body;
 
+      // Validação
+      if (!owner_id || !name || !phone) {
+        return res.status(400).json({
+          error: "Campos obrigatórios: owner_id, name, phone",
+        });
+      }
 
+      // Busca o nome do dono
+      const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
+      if (!owner) return res.status(404).json({ error: "Dono não encontrado" });
 
-
-    if (!owner_id || !name || !phone) {
-      return res.status(400).json({ error: "Campos obrigatórios: owner_id, name, phone" });
-    }
-
-    // Busca o nome do dono
-    const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
-    if (!owner) return res.status(404).json({ error: "Dono não encontrado" });
-
-    // Verifica se o membro já existe
-    let member = await dbGet("SELECT * FROM users WHERE whatsapp_number = ?", [phone]);
-
-    if (!member) {
-      // Cria usuário pendente
-      await dbRun(
-        "INSERT INTO users (name, whatsapp_number, status) VALUES (?, ?, 'invited')",
-        [name, phone]
+      // Verifica se o membro já existe
+      let member = await dbGet(
+        "SELECT * FROM users WHERE whatsapp_number = ?",
+        [phone]
       );
-      console.log(`👤 Usuário convidado criado: ${name} (${phone})`);
-    } else {
-      // Atualiza status, caso já exista
-      await dbRun("UPDATE users SET status='invited' WHERE id=?", [member.id]);
+
+      if (!member) {
+        // Cria usuário pendente
+        await dbRun(
+          "INSERT INTO users (name, whatsapp_number, status) VALUES (?, ?, 'invited')",
+          [name, phone]
+        );
+        console.log(`👤 Usuário convidado criado: ${name} (${phone})`);
+      } else {
+        // Atualiza status, caso já exista
+        await dbRun("UPDATE users SET status='invited' WHERE id=?", [member.id]);
+      }
+
+      // Cria o vínculo familiar
+      await dbRun(
+        "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
+        [owner_id, member?.id || null, name]
+      );
+
+      // Envia o convite via bot
+      await notifyBot(phone, name, owner.name, "invited_external");
+
+      res.json({ success: true, message: "Convite enviado com sucesso!" });
+    } catch (err) {
+      console.error("❌ Erro ao adicionar membro:", err);
+      res.status(500).json({ error: "Erro interno ao adicionar membro." });
     }
-
-    // Cria o vínculo familiar
-    await dbRun(
-      "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
-      [owner_id, member?.id || null, name]
-    );
-
-    // Envia o convite via bot
-    await notifyBot(phone, name, owner.name, "invited_external");
-
-    res.json({ success: true });
   });
 
   // =====================================================
   // Rota chamada pelo botão "Vincular WhatsApp" no app
   // =====================================================
   app.post("/link-whatsapp", async (req, res) => {
-    const { phone } = req.body;
+    try {
+      const { phone } = req.body;
 
-    if (!phone) {
-      return res.status(400).json({ error: "Número do WhatsApp é obrigatório." });
+      if (!phone) {
+        return res.status(400).json({ error: "Número do WhatsApp é obrigatório." });
+      }
+
+      await dbRun(
+        "UPDATE users SET status='active', verified_at=datetime('now') WHERE whatsapp_number=?",
+        [phone]
+      );
+
+      console.log(`✅ WhatsApp vinculado: ${phone}`);
+      res.json({ success: true, message: "WhatsApp vinculado com sucesso!" });
+    } catch (err) {
+      console.error("❌ Erro ao vincular WhatsApp:", err);
+      res.status(500).json({ error: "Erro interno ao vincular WhatsApp." });
     }
-
-    await dbRun(
-      "UPDATE users SET status='active', verified_at=datetime('now') WHERE whatsapp_number=?",
-      [phone]
-    );
-
-    console.log(`✅ WhatsApp vinculado: ${phone}`);
-    res.json({ success: true, message: "WhatsApp vinculado com sucesso!" });
   });
 }
