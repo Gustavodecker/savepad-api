@@ -33,21 +33,13 @@ async function notifyBot(phone, name, ownerName, action) {
 export function setupFamilyRoutes(app, dbGet, dbRun) {
 
   // =====================================================
-  // Middleware de log para capturar o body recebido
-  // =====================================================
-  app.use((req, res, next) => {
-    if (req.url.includes("/family/add")) {
-      console.log("📡 [POST] /family/add - Body recebido:");
-      console.log(req.body);
-    }
-    next();
-  });
-
-  // =====================================================
   // Rota para adicionar um novo membro à família
   // =====================================================
   app.post("/family/add", async (req, res) => {
     try {
+      console.log("📡 [POST] /family/add - Body recebido:");
+      console.log(req.body);
+
       const { owner_id, name, phone } = req.body;
 
       // Validação
