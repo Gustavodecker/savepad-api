@@ -39,6 +39,7 @@ export function setupFamilyRoutes(app, dbGet, dbRun) {
   const { owner_id, name, phone } = req.body;
 
 
+
     if (!owner_id || !name || !phone) {
       return res.status(400).json({ error: "Campos obrigatórios: owner_id, name, phone" });
     }
