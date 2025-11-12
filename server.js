@@ -438,7 +438,7 @@ app.post("/family/add", async (req, res) => {
     if (!owner_id || !member_email || !name)
       return res.status(400).json({ error: "Campos obrigatórios ausentes." });
 
-    const owner = await dbGet("SELECT id, email FROM users WHERE id = ?", [owner_id]);
+    const owner = await dbGet("SELECT id, email, name FROM users WHERE id = ?", [owner_id]);
     if (!owner)
       return res.status(404).json({ error: "Dono do plano não encontrado." });
 
@@ -448,13 +448,13 @@ app.post("/family/add", async (req, res) => {
         .json({ error: "Você não pode se adicionar como membro da sua própria família." });
     }
 
-    let member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
+    let member = await dbGet("SELECT id, name, whatsapp_number FROM users WHERE email = ?", [member_email]);
     if (!member) {
       await dbRun(
         "INSERT INTO users (name, email, created_at) VALUES (?, ?, datetime('now'))",
         [name, member_email]
       );
-      member = await dbGet("SELECT id FROM users WHERE email = ?", [member_email]);
+      member = await dbGet("SELECT id, name, whatsapp_number FROM users WHERE email = ?", [member_email]);
     }
 
     const exists = await dbGet(
@@ -469,6 +469,23 @@ app.post("/family/add", async (req, res) => {
       [owner_id, member.id, name]
     );
 
+    // 🔔 Envia notificação no WhatsApp (se tiver número)
+    if (member.whatsapp_number) {
+      try {
+        await fetch("http://localhost:3000/send-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            number: member.whatsapp_number,
+            message: `👋 Olá ${member.name || name}!\n\nVocê foi adicionado ao grupo familiar do *${owner.name}* no *AdminGrana*.\n\nAgora você pode acompanhar e compartilhar o controle financeiro da família diretamente pelo app! 💰`,
+          }),
+        });
+        console.log(`📩 Mensagem enviada para ${member.name} (${member.whatsapp_number})`);
+      } catch (err) {
+        console.warn("⚠️ Falha ao enviar notificação WhatsApp (add):", err.message);
+      }
+    }
+
     res.json({ success: true, message: "Membro adicionado com sucesso!" });
   } catch (err) {
     console.error("❌ Erro ao adicionar membro:", err);
@@ -476,46 +493,46 @@ app.post("/family/add", async (req, res) => {
   }
 });
 
-// 🔹 Remover membro da família (somente o dono pode remover)
+
 app.delete("/family/remove", async (req, res) => {
   try {
     const { owner_id, member_id } = req.body;
-
-    if (!owner_id || !member_id) {
+    if (!owner_id || !member_id)
       return res.status(400).json({ error: "Campos obrigatórios ausentes." });
-    }
 
-    // 🔒 Verifica se o solicitante é realmente dono de um plano familiar ativo
-    const ownerPlan = await dbGet(
-      "SELECT * FROM plans WHERE user_id = ? AND mode = 'familiar' AND status = 'approved'",
-      [owner_id]
-    );
-
-    if (!ownerPlan) {
-      return res.status(403).json({
-        error: "Apenas o dono de um plano familiar ativo pode remover membros.",
-      });
-    }
-
-    // 🔍 Verifica se o membro realmente pertence ao grupo familiar do dono
-    const memberRelation = await dbGet(
-      "SELECT * FROM family_members WHERE owner_id = ? AND member_id = ?",
+    const exists = await dbGet(
+      "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
       [owner_id, member_id]
     );
-
-    if (!memberRelation) {
+    if (!exists)
       return res.status(404).json({ error: "Membro não encontrado na família." });
-    }
 
-    // 🗑️ Remove o membro da família
+    const member = await dbGet("SELECT name, whatsapp_number FROM users WHERE id = ?", [member_id]);
+    const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
+
     await dbRun("DELETE FROM family_members WHERE owner_id = ? AND member_id = ?", [
       owner_id,
       member_id,
     ]);
 
-    console.log(`👤 Membro ${member_id} removido com sucesso pelo owner ${owner_id}`);
+    // 🔔 Notificação no WhatsApp
+    if (member?.whatsapp_number) {
+      try {
+        await fetch("http://localhost:3000/send-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            number: member.whatsapp_number,
+            message: `⚠️ Olá ${member.name}.\n\nVocê foi removido do grupo familiar de *${owner.name}* no *AdminGrana*.\nSe acredita que isso foi um engano, entre em contato com o dono do grupo.`,
+          }),
+        });
+        console.log(`📩 Notificação enviada ao remover ${member.name}`);
+      } catch (err) {
+        console.warn("⚠️ Falha ao enviar notificação WhatsApp (remove):", err.message);
+      }
+    }
 
-    res.json({ success: true, message: "Membro removido com sucesso!" });
+    res.json({ success: true, message: "Membro removido com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao remover membro:", err);
     res.status(500).json({ error: "Erro ao remover membro da família." });
