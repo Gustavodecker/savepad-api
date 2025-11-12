@@ -609,6 +609,8 @@ app.get("/family/:user_id", async (req, res) => {
   }
 });
 
+setupFamilyRoutes(app, dbGet, dbRun);
+
 // ================== INICIAR SERVIDOR ==================
 app.listen(PORT, () => {
   console.log(`🚀 SavePad API rodando na porta ${PORT}`);
