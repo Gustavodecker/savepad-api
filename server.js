@@ -434,66 +434,7 @@ app.get("/api/check-whatsapp-link", async (req, res) => {
 
 
 // ================== PLANOS FAMILIARES ==================
-app.post("/family/add", async (req, res) => {
-  try {
-    const { owner_id, member_email, name } = req.body;
-    if (!owner_id || !member_email || !name)
-      return res.status(400).json({ error: "Campos obrigatórios ausentes." });
 
-    const owner = await dbGet("SELECT id, email, name FROM users WHERE id = ?", [owner_id]);
-    if (!owner)
-      return res.status(404).json({ error: "Dono do plano não encontrado." });
-
-    if (owner.email.trim().toLowerCase() === member_email.trim().toLowerCase()) {
-      return res
-        .status(400)
-        .json({ error: "Você não pode se adicionar como membro da sua própria família." });
-    }
-
-    let member = await dbGet("SELECT id, name, whatsapp_number FROM users WHERE email = ?", [member_email]);
-    if (!member) {
-      await dbRun(
-        "INSERT INTO users (name, email, created_at) VALUES (?, ?, datetime('now'))",
-        [name, member_email]
-      );
-      member = await dbGet("SELECT id, name, whatsapp_number FROM users WHERE email = ?", [member_email]);
-    }
-
-    const exists = await dbGet(
-      "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
-      [owner_id, member.id]
-    );
-    if (exists)
-      return res.json({ message: "Usuário já faz parte da família." });
-
-    await dbRun(
-      "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
-      [owner_id, member.id, name]
-    );
-
-    // 🔔 Envia notificação no WhatsApp (se tiver número)
-    if (member.whatsapp_number) {
-      try {
-        await fetch("http://localhost:3000/send-message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            number: member.whatsapp_number,
-            message: `👋 Olá ${member.name || name}!\n\nVocê foi adicionado ao grupo familiar do *${owner.name}* no *AdminGrana*.\n\nAgora você pode acompanhar e compartilhar o controle financeiro da família diretamente pelo app! 💰`,
-          }),
-        });
-        console.log(`📩 Mensagem enviada para ${member.name} (${member.whatsapp_number})`);
-      } catch (err) {
-        console.warn("⚠️ Falha ao enviar notificação WhatsApp (add):", err.message);
-      }
-    }
-
-    res.json({ success: true, message: "Membro adicionado com sucesso!" });
-  } catch (err) {
-    console.error("❌ Erro ao adicionar membro:", err);
-    res.status(500).json({ error: "Erro ao adicionar membro à família." });
-  }
-});
 
 
 app.delete("/family/remove", async (req, res) => {
