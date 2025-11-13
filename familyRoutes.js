@@ -128,6 +128,13 @@ export function setupFamilyRoutes(app, dbGet, dbRun) {
       ]);
 
       if (member?.whatsapp_number) {
+        console.log("📡 Enviando notificação de remoção ao bot:", {
+  phone: member.whatsapp_number,
+  name: member.name,
+  ownerName: owner.name,
+  action: "removed",
+});
+
         await notifyBot(member.whatsapp_number, member.name, owner.name, "removed");
         console.log(`📩 Notificação enviada ao remover ${member.name}`);
       }
