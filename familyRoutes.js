@@ -119,7 +119,15 @@ export function setupFamilyRoutes(app, dbGet, dbRun) {
         return res.status(400).json({ error: "Campos obrigatórios ausentes." });
       }
 
-      const member = await dbGet("SELECT name, whatsapp_number FROM users WHERE id = ?", [member_id]);
+     const member = await dbGet(
+  `SELECT 
+     COALESCE(fm.name, u.name) AS name, 
+     u.whatsapp_number 
+   FROM family_members fm
+   LEFT JOIN users u ON u.id = fm.member_id
+   WHERE fm.member_id = ? AND fm.owner_id = ?`,
+  [member_id, owner_id]
+);
       const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
 
       await dbRun("DELETE FROM family_members WHERE owner_id = ? AND member_id = ?", [
