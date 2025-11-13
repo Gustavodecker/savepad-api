@@ -327,86 +327,69 @@ app.post("/webhook", async (req, res) => {
 app.get("/status/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
-    const userIdStr = String(user_id).trim();
+    const id = String(user_id).trim();
 
-    console.log(`📥 [STATUS] Consulta de status do usuário ${userIdStr}`);
+    console.log(`📥 STATUS → user_id=${id}`);
 
-    // 🔹 1) Verifica se o usuário existe
-    const user = await dbGet("SELECT id FROM users WHERE id = ?", [userIdStr]);
+    // 1. Verifica se o usuário existe
+    const user = await dbGet(
+      "SELECT id FROM users WHERE id = ? OR email = ?",
+      [id, id]
+    );
+
     if (!user) {
-      console.log("🚫 Usuário não encontrado.");
+      console.log("❌ Usuário não encontrado");
       return res.json({ status: "Sem plano ativo" });
     }
 
-    // 🔹 2) Verifica se existe plano individual para este usuário
-    const planoIndividual = await dbGet(
-      `SELECT id, user_id, type, status, mode
-         FROM plans
-        WHERE user_id = ?
-          AND (mode IS NULL OR mode = 'individual')
-        ORDER BY id DESC
-        LIMIT 1`,
-      [userIdStr]
-    );
+    let targetId = String(user.id);
 
-    // 🔹 3) Verifica se usuário é membro de plano familiar
-    const relation = await dbGet(
+    // 2. Verifica se é membro de alguma família
+    const rel = await dbGet(
       "SELECT owner_id FROM family_members WHERE member_id = ?",
-      [userIdStr]
+      [targetId]
     );
 
-    let ownerId = userIdStr;
+    if (rel?.owner_id) {
+      targetId = String(rel.owner_id);
+      console.log("👨‍👩‍👧 Usuário é membro, dono real:", targetId);
+    }
 
-    if (relation?.owner_id) {
-      ownerId = String(relation.owner_id);
+    // 3. Busca plano válido (approved, pending)
+    const plano = await dbGet(
+      `SELECT id, user_id, type, status, mode
+       FROM plans
+       WHERE CAST(user_id AS TEXT) = ?
+         AND status IN ('approved','pending')
+       ORDER BY id DESC
+       LIMIT 1`,
+      [targetId]
+    );
 
-      console.log(`👨‍👧 Usuário é membro de família. Dono: ${ownerId}`);
-
-      // Buscar plano familiar do dono
-      const planoFamiliar = await dbGet(
-        `SELECT id, user_id, type, status, mode
-           FROM plans
-          WHERE user_id = ?
-            AND mode = 'familiar'
-          ORDER BY id DESC
-          LIMIT 1`,
-        [ownerId]
-      );
-
-      if (planoFamiliar) {
-        return res.json({
-          status: planoFamiliar.status === "approved" ? "Ativo" :
-                  planoFamiliar.status === "pending" ? "Pendente" :
-                  "Cancelado",
-          type: planoFamiliar.type,
-          mode: "familiar",
-          owner_id: ownerId,
-          user_id: userIdStr,
-        });
-      }
-
+    if (!plano) {
+      console.log("🚫 Nenhum plano válido.");
       return res.json({ status: "Sem plano ativo" });
     }
 
-    // 🔹 4) Se NÃO é membro, retorna o plano individual (SE existir)
-    if (planoIndividual) {
-      return res.json({
-        status: planoIndividual.status === "approved" ? "Ativo" :
-                planoIndividual.status === "pending" ? "Pendente" :
-                "Cancelado",
-        type: planoIndividual.type,
-        mode: "individual",
-        owner_id: userIdStr,
-        user_id: userIdStr,
-      });
-    }
+    let finalStatus = plano.status;
 
-    // 🔹 5) Sem plano
-    return res.json({ status: "Sem plano ativo" });
+    if (finalStatus === "approved") finalStatus = "Ativo";
+    if (finalStatus === "pending") finalStatus = "Pendente";
+
+    console.log("📌 Status final:", finalStatus);
+
+    res.json({
+      status: finalStatus,
+      type: plano.type,
+      mode: plano.mode,
+      owner_id: targetId,
+      user_id: id,
+      isMember: targetId !== id,
+    });
 
   } catch (err) {
-    console.error("❌ Erro ao consultar plano:", err);
-    res.status(500).json({ error: "Erro ao consultar plano" });
+    console.error("❌ Erro /status:", err);
+    res.status(500).json({ status: "Erro" });
   }
 });
 
