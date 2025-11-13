@@ -329,71 +329,81 @@ app.get("/status/:user_id", async (req, res) => {
     const { user_id } = req.params;
     const userIdStr = String(user_id).trim();
 
-    console.log(`📥 [STATUS] Requisição recebida para user_id=${userIdStr}`);
+    console.log(`📥 [STATUS] Consulta de status do usuário ${userIdStr}`);
 
-    // 🔹 Verifica se o usuário é membro de uma família (e normaliza owner_id)
-    const member = await dbGet(
-      `SELECT owner_id 
-         FROM family_members 
-        WHERE CAST(member_id AS TEXT) = ? 
-           OR member_id IN (SELECT id FROM users WHERE email = ?)`,
-      [userIdStr, userIdStr]
-    );
-
-    console.log("👨‍👩‍👧 Verificação de vínculo familiar:", member);
-
-    let targetUserId = userIdStr;
-
-    if (member?.owner_id) {
-      if (isNaN(member.owner_id)) {
-        const ownerRow = await dbGet(
-          "SELECT id FROM users WHERE email = ?",
-          [member.owner_id]
-        );
-        if (ownerRow?.id) {
-          targetUserId = String(ownerRow.id);
-          console.log(`📧 Owner ID convertido de e-mail para ID numérico: ${targetUserId}`);
-        } else {
-          console.warn(`⚠️ Nenhum usuário encontrado com email ${member.owner_id}`);
-        }
-      } else {
-        targetUserId = String(member.owner_id);
-      }
-    }
-
-    console.log(`🎯 Consultando plano do usuário alvo: ${targetUserId}`);
-
-    const plano = await dbGet(
-      `SELECT id, user_id, type, status, mode
-         FROM plans
-        WHERE CAST(user_id AS TEXT) = ?
-           OR user_id = ?
-        ORDER BY id DESC
-        LIMIT 1`,
-      [targetUserId, targetUserId]
-    );
-
-    console.log("📄 Resultado do plano encontrado:", plano);
-
-    if (!plano) {
-      console.log(`🚫 Nenhum plano encontrado para user_id=${targetUserId}`);
+    // 🔹 1) Verifica se o usuário existe
+    const user = await dbGet("SELECT id FROM users WHERE id = ?", [userIdStr]);
+    if (!user) {
+      console.log("🚫 Usuário não encontrado.");
       return res.json({ status: "Sem plano ativo" });
     }
 
-    let statusFinal = plano.status;
-    if (statusFinal === "approved") statusFinal = "Ativo";
-    else if (statusFinal === "pending") statusFinal = "Pendente";
-    else if (statusFinal === "cancelled") statusFinal = "Cancelado";
+    // 🔹 2) Verifica se existe plano individual para este usuário
+    const planoIndividual = await dbGet(
+      `SELECT id, user_id, type, status, mode
+         FROM plans
+        WHERE user_id = ?
+          AND (mode IS NULL OR mode = 'individual')
+        ORDER BY id DESC
+        LIMIT 1`,
+      [userIdStr]
+    );
 
-    console.log(`✅ Status final para ${targetUserId}: ${statusFinal}`);
+    // 🔹 3) Verifica se usuário é membro de plano familiar
+    const relation = await dbGet(
+      "SELECT owner_id FROM family_members WHERE member_id = ?",
+      [userIdStr]
+    );
 
-    res.json({
-      status: statusFinal,
-      type: plano.type,
-      mode: plano.mode,
-      owner_id: targetUserId,
-      user_id: userIdStr,
-    });
+    let ownerId = userIdStr;
+
+    if (relation?.owner_id) {
+      ownerId = String(relation.owner_id);
+
+      console.log(`👨‍👧 Usuário é membro de família. Dono: ${ownerId}`);
+
+      // Buscar plano familiar do dono
+      const planoFamiliar = await dbGet(
+        `SELECT id, user_id, type, status, mode
+           FROM plans
+          WHERE user_id = ?
+            AND mode = 'familiar'
+          ORDER BY id DESC
+          LIMIT 1`,
+        [ownerId]
+      );
+
+      if (planoFamiliar) {
+        return res.json({
+          status: planoFamiliar.status === "approved" ? "Ativo" :
+                  planoFamiliar.status === "pending" ? "Pendente" :
+                  "Cancelado",
+          type: planoFamiliar.type,
+          mode: "familiar",
+          owner_id: ownerId,
+          user_id: userIdStr,
+        });
+      }
+
+      return res.json({ status: "Sem plano ativo" });
+    }
+
+    // 🔹 4) Se NÃO é membro, retorna o plano individual (SE existir)
+    if (planoIndividual) {
+      return res.json({
+        status: planoIndividual.status === "approved" ? "Ativo" :
+                planoIndividual.status === "pending" ? "Pendente" :
+                "Cancelado",
+        type: planoIndividual.type,
+        mode: "individual",
+        owner_id: userIdStr,
+        user_id: userIdStr,
+      });
+    }
+
+    // 🔹 5) Sem plano
+    return res.json({ status: "Sem plano ativo" });
+
   } catch (err) {
     console.error("❌ Erro ao consultar plano:", err);
     res.status(500).json({ error: "Erro ao consultar plano" });
