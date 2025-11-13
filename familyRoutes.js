@@ -14,7 +14,7 @@ import fetch from "node-fetch";
 async function notifyBot(phone, message) {
   if (!phone) return console.log("⚠️ Número não informado para envio de mensagem.");
   try {
-    await fetch("http://localhost:3000/send-message", {
+    await fetch("http://135.181.97.173:3000/send-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ number: phone, message }),
