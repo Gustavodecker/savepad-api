@@ -43,11 +43,12 @@ export function setupFamilyRoutes(app, dbGet, dbRun) {
       const { owner_id, name, phone } = req.body;
 
       // Validação
-      if (!owner_id || !name || !phone) {
-        return res.status(400).json({
-          error: "Campos obrigatórios: owner_id, name, phone",
-        });
-      }
+     if (!owner_id || !name || !phone) {
+  console.warn("⚠️ Tentativa de convite com dados incompletos:", req.body);
+  return res.status(400).json({
+    error: "Você precisa informar o nome e o número de WhatsApp do novo membro.",
+  });
+}
 
       // Busca o nome do dono
       const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
