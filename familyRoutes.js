@@ -107,52 +107,71 @@ export function setupFamilyRoutes(app, dbGet, dbRun) {
     }
   });
 
-  // =====================================================
-  // Remover membro
-  // =====================================================
-  app.delete("/family/remove", async (req, res) => {
-    try {
-      console.log("📡 [DELETE] /family/remove - Body recebido:", req.body);
-      const { owner_id, member_id } = req.body;
+ // =====================================================
+// Rota: Remover membro do grupo familiar
+// =====================================================
+app.delete("/family/remove", async (req, res) => {
+  try {
+    console.log("📡 [DELETE] /family/remove - Body recebido:", req.body);
+    const { owner_id, member_id } = req.body;
 
-      if (!owner_id || !member_id) {
-        return res.status(400).json({ error: "Campos obrigatórios ausentes." });
-      }
+    if (!owner_id || !member_id) {
+      return res.status(400).json({ error: "Campos obrigatórios ausentes." });
+    }
 
-     const member = await dbGet(
-  `SELECT 
-     COALESCE(fm.name, u.name) AS name, 
-     u.whatsapp_number 
-   FROM family_members fm
-   LEFT JOIN users u ON u.id = fm.member_id
-   WHERE fm.member_id = ? AND fm.owner_id = ?`,
-  [member_id, owner_id]
-);
-      const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
+    // 🔹 Busca nome e telefone do membro, priorizando o nome no vínculo familiar
+    const member = await dbGet(
+      `SELECT 
+         COALESCE(fm.name, u.name) AS name,
+         u.whatsapp_number
+       FROM family_members fm
+       LEFT JOIN users u ON u.id = fm.member_id
+       WHERE fm.member_id = ? AND fm.owner_id = ?`,
+      [member_id, owner_id]
+    );
 
-      await dbRun("DELETE FROM family_members WHERE owner_id = ? AND member_id = ?", [
-        owner_id,
-        member_id,
-      ]);
+    if (!member) {
+      console.warn("⚠️ Membro não encontrado no vínculo familiar:", { member_id, owner_id });
+      return res.status(404).json({ error: "Membro não encontrado." });
+    }
 
-      if (member?.whatsapp_number) {
-        console.log("📡 Enviando notificação de remoção ao bot:", {
-  phone: member.whatsapp_number,
-  name: member.name,
-  ownerName: owner.name,
-  action: "removed",
+    // 🔹 Busca o nome do dono
+    const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
+
+    // 🔹 Remove vínculo
+    await dbRun(
+      "DELETE FROM family_members WHERE owner_id = ? AND member_id = ?",
+      [owner_id, member_id]
+    );
+
+    // 🔹 Log detalhado
+    console.log("🧩 Membro removido:", {
+      member_id,
+      member_name: member.name,
+      phone: member.whatsapp_number,
+      owner_name: owner?.name,
+    });
+
+    // 🔹 Envia notificação de remoção, se houver WhatsApp
+    if (member.whatsapp_number) {
+      console.log("📡 Enviando notificação de remoção ao bot:", {
+        phone: member.whatsapp_number,
+        name: member.name,
+        ownerName: owner?.name,
+        action: "removed",
+      });
+
+      await notifyBot(member.whatsapp_number, member.name, owner?.name, "removed");
+      console.log(`📩 Notificação enviada ao remover ${member.name}`);
+    }
+
+    res.json({ success: true, message: "Membro removido com sucesso!" });
+  } catch (err) {
+    console.error("❌ Erro ao remover membro:", err);
+    res.status(500).json({ error: "Erro interno ao remover membro." });
+  }
 });
 
-        await notifyBot(member.whatsapp_number, member.name, owner.name, "removed");
-        console.log(`📩 Notificação enviada ao remover ${member.name}`);
-      }
-
-      res.json({ success: true, message: "Membro removido com sucesso!" });
-    } catch (err) {
-      console.error("❌ Erro ao remover membro:", err);
-      res.status(500).json({ error: "Erro interno ao remover membro." });
-    }
-  });
 
   // =====================================================
   // Vincular WhatsApp
