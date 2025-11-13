@@ -33,61 +33,57 @@ async function notifyBot(phone, name, ownerName, action) {
 export function setupFamilyRoutes(app, dbGet, dbRun) {
 
   // =====================================================
-  // Rota para adicionar um novo membro à família
+  // ➕ Adicionar um novo membro à família
   // =====================================================
   app.post("/family/add", async (req, res) => {
     try {
-      console.log("📡 [POST] /family/add - Body recebido:");
-      console.log(req.body);
+      console.log("📡 [POST] /family/add - Body recebido:", req.body);
 
       const { owner_id, name, phone } = req.body;
 
-      // Validação
-     if (!owner_id || !name || !phone) {
-  console.warn("⚠️ Tentativa de convite com dados incompletos:", req.body);
-  return res.status(400).json({
-    error: "Você precisa informar o nome e o número de WhatsApp do novo membro.",
-  });
-}
+      // 🔹 Validação de campos obrigatórios
+      if (!owner_id || !name || !phone) {
+        console.warn("⚠️ Tentativa de convite com dados incompletos:", req.body);
+        return res.status(400).json({
+          error: "Você precisa informar o nome e o número de WhatsApp do novo membro.",
+        });
+      }
 
-      // Busca o nome do dono
+      // 🔹 Normaliza o número de telefone
+      let normalizedPhone = phone.replace(/\D/g, ""); // remove traços, espaços, parênteses
+      if (normalizedPhone.length < 10) {
+        return res.status(400).json({ error: "Número de WhatsApp inválido." });
+      }
+      if (!normalizedPhone.startsWith("55")) {
+        normalizedPhone = "55" + normalizedPhone;
+      }
+
+      // 🔹 Busca o nome do dono
       const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
       if (!owner) return res.status(404).json({ error: "Dono não encontrado" });
 
-      // Verifica se o membro já existe
-      let member = await dbGet(
-        "SELECT * FROM users WHERE whatsapp_number = ?",
-        [phone]
-      );
+      // 🔹 Busca o membro pelo número
+      let member = await dbGet("SELECT * FROM users WHERE whatsapp_number = ?", [normalizedPhone]);
 
       if (!member) {
-        // Cria usuário pendente
         await dbRun(
           "INSERT INTO users (name, whatsapp_number, status) VALUES (?, ?, 'invited')",
-          [name, phone]
+          [name, normalizedPhone]
         );
-        console.log(`👤 Usuário convidado criado: ${name} (${phone})`);
+        console.log(`👤 Usuário convidado criado: ${name} (${normalizedPhone})`);
+        member = await dbGet("SELECT * FROM users WHERE whatsapp_number = ?", [normalizedPhone]);
       } else {
-        // Atualiza status, caso já exista
         await dbRun("UPDATE users SET status='invited' WHERE id=?", [member.id]);
       }
 
-      // Cria o vínculo familiar
+      // 🔹 Cria o vínculo familiar (com ID sempre definido)
       await dbRun(
         "INSERT INTO family_members (owner_id, member_id, name) VALUES (?, ?, ?)",
-        [owner_id, member?.id || null, name]
+        [owner_id, member.id, name]
       );
 
-      // 🔹 Normaliza o número de telefone
-let normalizedPhone = phone.replace(/\D/g, ""); // remove traços, espaços, parênteses
-if (!normalizedPhone.startsWith("55")) {
-  normalizedPhone = "55" + normalizedPhone;
-}
-
-
-      // Envia o convite via bot
-     await notifyBot(normalizedPhone, name, owner.name, "invited_external");
-
+      // 🔹 Envia o convite via bot
+      await notifyBot(normalizedPhone, name, owner.name, "invited_external");
 
       res.json({ success: true, message: "Convite enviado com sucesso!" });
     } catch (err) {
@@ -97,7 +93,7 @@ if (!normalizedPhone.startsWith("55")) {
   });
 
   // =====================================================
-  // Rota chamada pelo botão "Vincular WhatsApp" no app
+  // 🔗 Vincular WhatsApp (quando o usuário entra no app)
   // =====================================================
   app.post("/link-whatsapp", async (req, res) => {
     try {
@@ -107,12 +103,13 @@ if (!normalizedPhone.startsWith("55")) {
         return res.status(400).json({ error: "Número do WhatsApp é obrigatório." });
       }
 
+      const formatted = phone.replace(/\D/g, "");
       await dbRun(
         "UPDATE users SET status='active', verified_at=datetime('now') WHERE whatsapp_number=?",
-        [phone]
+        [formatted]
       );
 
-      console.log(`✅ WhatsApp vinculado: ${phone}`);
+      console.log(`✅ WhatsApp vinculado: ${formatted}`);
       res.json({ success: true, message: "WhatsApp vinculado com sucesso!" });
     } catch (err) {
       console.error("❌ Erro ao vincular WhatsApp:", err);
