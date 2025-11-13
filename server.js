@@ -437,51 +437,102 @@ app.get("/api/check-whatsapp-link", async (req, res) => {
 
 
 
+// =====================================================
+// Remover membro pelo vínculo (relation_id) — robusto
+// =====================================================
 app.delete("/family/remove", async (req, res) => {
-  console.log("📡 [DELETE] /family/remove - Body recebido:", req.body);
   try {
-    const { owner_id, member_id } = req.body;
-    if (!owner_id || !member_id)
-      return res.status(400).json({ error: "Campos obrigatórios ausentes." });
+    console.log("📡 [DELETE] /family/remove - Body recebido:", req.body);
+    const { owner_id, relation_id, member_id } = req.body;
 
-    const exists = await dbGet(
-      "SELECT 1 FROM family_members WHERE owner_id = ? AND member_id = ?",
-      [owner_id, member_id]
-    );
-    if (!exists)
-      return res.status(404).json({ error: "Membro não encontrado na família." });
-
-    const member = await dbGet("SELECT name, whatsapp_number FROM users WHERE id = ?", [member_id]);
-    const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
-
-    await dbRun("DELETE FROM family_members WHERE owner_id = ? AND member_id = ?", [
-      owner_id,
-      member_id,
-    ]);
-
-    // 🔔 Notificação no WhatsApp
-    if (member?.whatsapp_number) {
-      try {
-        await fetch("http://localhost:3000/send-message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            number: member.whatsapp_number,
-            message: `⚠️ Olá ${member.name}.\n\nVocê foi removido do grupo familiar de *${owner.name}* no *AdminGrana*.\nSe acredita que isso foi um engano, entre em contato com o dono do grupo.`,
-          }),
-        });
-        console.log(`📩 Notificação enviada ao remover ${member.name}`);
-      } catch (err) {
-        console.warn("⚠️ Falha ao enviar notificação WhatsApp (remove):", err.message);
-      }
+    if (!owner_id || (!relation_id && !member_id)) {
+      return res.status(400).json({ error: "Informe owner_id e relation_id (preferencial) ou member_id." });
     }
 
-    res.json({ success: true, message: "Membro removido com sucesso." });
+    // 1) Carrega o vínculo alvo (preferindo relation_id)
+    let rel;
+    if (relation_id) {
+      rel = await dbGet(
+        `SELECT 
+           fm.id AS relation_id,
+           fm.member_id,
+           fm.name AS invited_name,
+           u.name AS user_name,
+           u.whatsapp_number
+         FROM family_members fm
+         LEFT JOIN users u ON u.id = fm.member_id
+         WHERE fm.id = ? AND fm.owner_id = ?`,
+        [relation_id, owner_id]
+      );
+    } else {
+      rel = await dbGet(
+        `SELECT 
+           fm.id AS relation_id,
+           fm.member_id,
+           fm.name AS invited_name,
+           u.name AS user_name,
+           u.whatsapp_number
+         FROM family_members fm
+         LEFT JOIN users u ON u.id = fm.member_id
+         WHERE fm.member_id = ? AND fm.owner_id = ? 
+         ORDER BY fm.id DESC LIMIT 1`,
+        [member_id, owner_id]
+      );
+    }
+
+    if (!rel) {
+      console.warn("⚠️ Vínculo não encontrado para remoção.", { owner_id, relation_id, member_id });
+      return res.status(404).json({ error: "Vínculo da família não encontrado." });
+    }
+
+    const owner = await dbGet("SELECT name FROM users WHERE id = ?", [owner_id]);
+
+    // 2) Remove pelo relation_id (sem ambiguidade)
+    await dbRun("DELETE FROM family_members WHERE id = ?", [rel.relation_id]);
+
+    // 3) Nome amigável (prefere o que foi digitado no convite)
+    const finalName = rel.invited_name || rel.user_name || "Membro";
+    console.log("🧾 Removido:", {
+      relation_id: rel.relation_id,
+      member_id: rel.member_id,
+      invited_name: rel.invited_name,
+      user_name: rel.user_name,
+      phone: rel.whatsapp_number,
+    });
+
+    // 4) Notifica no WhatsApp, se tiver número
+    if (rel.whatsapp_number) {
+      console.log("📡 Enviando notificação de remoção ao bot:", {
+        phone: rel.whatsapp_number,
+        name: finalName,
+        ownerName: owner?.name,
+        action: "removed",
+      });
+
+      // Se você já tem notifyBot(phone, name, ownerName, action):
+      await fetch("http://localhost:3000/send-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: rel.whatsapp_number,
+          name: finalName,
+          ownerName: owner?.name,
+          action: "removed",
+        }),
+      });
+
+      console.log(`📩 Mensagem de remoção enviada para ${finalName} (${rel.whatsapp_number})`);
+    } else {
+      console.log("ℹ️ Sem WhatsApp cadastrado — não foi enviada mensagem de remoção.");
+    }
+
+    res.json({ success: true, message: "Membro removido com sucesso!" });
   } catch (err) {
     console.error("❌ Erro ao remover membro:", err);
-    res.status(500).json({ error: "Erro ao remover membro da família." });
+    res.status(500).json({ error: "Erro interno ao remover membro." });
   }
 });
+
 
 
 
