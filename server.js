@@ -228,12 +228,26 @@ app.post("/cancel-plan", async (req, res) => {
     const { user_id } = req.body;
     if (!user_id) return res.status(400).json({ error: "user_id obrigatório" });
 
-    const plano = await dbGet(
-      "SELECT * FROM plans WHERE user_id = ? AND status = 'approved' ORDER BY id DESC LIMIT 1",
-      [user_id]
-    );
+   const plano = await dbGet(
+  "SELECT * FROM plans WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+  [userId]
+);
 
-    if (!plano) return res.status(404).json({ error: "Nenhum plano ativo encontrado." });
+if (!plano) {
+  return res.json({
+    status: "Sem plano ativo",
+    type: null,
+  });
+}
+
+// SE TRIAL
+if (plano.type === "trial") {
+  return res.json({
+    status: "ativo",
+    type: "trial",
+    expires_at: plano.expires_at
+  });
+}
 
     // 🔸 Cancela assinatura recorrente no Mercado Pago (se existir)
     if (plano.preapproval_id) {
