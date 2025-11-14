@@ -323,75 +323,52 @@ app.post("/webhook", async (req, res) => {
 });
 
 
-// ================== CONSULTAR STATUS DO PLANO (com logs detalhados) ==================
+// =======================
+// 🔍 STATUS DO PLANO
+// =======================
 app.get("/status/:user_id", async (req, res) => {
   try {
-    const { user_id } = req.params;
-    const id = String(user_id).trim();
+    const userId = req.params.user_id;
 
-    console.log(`📥 STATUS → user_id=${id}`);
+    console.log("📥 STATUS → user_id=" + userId);
 
-    // 1. Verifica se o usuário existe
-    const user = await dbGet(
-      "SELECT id FROM users WHERE id = ? OR email = ?",
-      [id, id]
-    );
-
-    if (!user) {
-      console.log("❌ Usuário não encontrado");
-      return res.json({ status: "Sem plano ativo" });
-    }
-
-    let targetId = String(user.id);
-
-    // 2. Verifica se é membro de alguma família
-    const rel = await dbGet(
-      "SELECT owner_id FROM family_members WHERE member_id = ?",
-      [targetId]
-    );
-
-    if (rel?.owner_id) {
-      targetId = String(rel.owner_id);
-      console.log("👨‍👩‍👧 Usuário é membro, dono real:", targetId);
-    }
-
-    // 3. Busca plano válido (approved, pending)
+    // Busca SEMPRE o plano mais recente
     const plano = await dbGet(
-      `SELECT id, user_id, type, status, mode
-       FROM plans
-       WHERE CAST(user_id AS TEXT) = ?
-         AND status IN ('approved','pending')
-       ORDER BY id DESC
+      `SELECT * FROM plans
+       WHERE user_id = ?
+       ORDER BY datetime(expires_at) DESC
        LIMIT 1`,
-      [targetId]
+      [userId]
     );
 
     if (!plano) {
-      console.log("🚫 Nenhum plano válido.");
-      return res.json({ status: "Sem plano ativo" });
+      console.log("🚫 Nenhum plano encontrado.");
+      return res.json({ status: "sem plano", type: null });
     }
 
-    let finalStatus = plano.status;
+    // Verifica validade
+    const hoje = dayjs();
+    const expira = dayjs(plano.expires_at);
 
-    if (finalStatus === "approved") finalStatus = "Ativo";
-    if (finalStatus === "pending") finalStatus = "Pendente";
+    if (expira.isBefore(hoje)) {
+      console.log("⚠️ Plano encontrado, mas está expirado:", plano.expires_at);
+      return res.json({ status: "sem plano", type: plano.type });
+    }
 
-    console.log("📌 Status final:", finalStatus);
+    console.log("📌 Plano ativo:", plano.type, " expira:", plano.expires_at);
 
-    res.json({
-      status: finalStatus,
+    return res.json({
+      status: "ativo",
       type: plano.type,
-      mode: plano.mode,
-      owner_id: targetId,
-      user_id: id,
-      isMember: targetId !== id,
+      expires_at: plano.expires_at
     });
 
   } catch (err) {
     console.error("❌ Erro /status:", err);
-    res.status(500).json({ status: "Erro" });
+    return res.status(500).json({ status: "erro" });
   }
 });
+
 
 
 // ================== VINCULAÇÃO DE WHATSAPP ==================
