@@ -36,6 +36,15 @@ const PORT = process.env.PORT || 4000;
 const DB_PATH = process.env.DB_PATH || "/root/bot-whatsapp/savepad.db";
 const BASE_URL = process.env.BASE_URL || "https://example.ngrok-free.app";
 
+// ================== BANCO DE DADOS ==================
+let db = new sqlite3.Database(DB_PATH, (err) => {
+  if (err) console.error("❌ Erro ao abrir o banco:", err);
+  else console.log(`📦 Banco conectado: ${DB_PATH}`);
+});
+const dbAll = promisify(db.all.bind(db));
+const dbRun = promisify(db.run.bind(db));
+const dbGet = promisify(db.get.bind(db));
+
 // ========================================
 // 📌 ROTA PARA CRIAR TRIAL DO ADMINGRANA
 // ========================================
@@ -67,15 +76,6 @@ app.post("/trial", async (req, res) => {
   }
 });
 
-
-// ================== BANCO DE DADOS ==================
-let db = new sqlite3.Database(DB_PATH, (err) => {
-  if (err) console.error("❌ Erro ao abrir o banco:", err);
-  else console.log(`📦 Banco conectado: ${DB_PATH}`);
-});
-const dbAll = promisify(db.all.bind(db));
-const dbRun = promisify(db.run.bind(db));
-const dbGet = promisify(db.get.bind(db));
 
 // ================== MERCADO PAGO ==================
 const client = new MercadoPagoConfig({
