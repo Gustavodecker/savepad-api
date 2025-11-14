@@ -1,5 +1,5 @@
 /****************************************************************************************
- * SAVEpad API - Servidor de Planos e Pagamentos (SDK v2 Mercado Pago)
+ * AdminGrana API - Servidor de Planos e Pagamentos (SDK v2 Mercado Pago)
  * --------------------------------------------------------------------------------------
  * Banco compartilhado com o bot WhatsApp (/root/bot-whatsapp/savepad.db)
  * 
@@ -35,6 +35,38 @@ app.use(cors());
 const PORT = process.env.PORT || 4000;
 const DB_PATH = process.env.DB_PATH || "/root/bot-whatsapp/savepad.db";
 const BASE_URL = process.env.BASE_URL || "https://example.ngrok-free.app";
+
+// ========================================
+// 📌 ROTA PARA CRIAR TRIAL DO ADMINGRANA
+// ========================================
+app.post("/trial", async (req, res) => {
+  try {
+    const { user_id, expires_at } = req.body;
+
+    if (!user_id || !expires_at) {
+      return res.status(400).json({ error: "user_id e expires_at são obrigatórios" });
+    }
+
+    // Marca que o usuário já usou o trial
+    await dbRun(
+      `UPDATE users SET ever_used_trial = 1 WHERE id = ?`,
+      [user_id]
+    );
+
+    // Insere o trial como plano aprovado
+    await dbRun(
+      `INSERT INTO plans (user_id, type, status, expires_at)
+       VALUES (?, 'trial', 'approved', ?)`,
+      [user_id, expires_at]
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Erro ao criar trial:", err);
+    return res.status(500).json({ error: "Erro interno ao criar trial" });
+  }
+});
+
 
 // ================== BANCO DE DADOS ==================
 let db = new sqlite3.Database(DB_PATH, (err) => {
