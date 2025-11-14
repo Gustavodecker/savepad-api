@@ -342,9 +342,13 @@ app.get("/status/:user_id", async (req, res) => {
     );
 
     if (!plano) {
-      console.log("🚫 Nenhum plano encontrado.");
-      return res.json({ status: "sem plano", type: null });
-    }
+       console.log("🚫 Nenhum plano encontrado.");
+  return res.json({
+    status: "none",   // 🔥 padronizado
+    type: null,
+    expires_at: null
+  });
+}
 
     // Verifica validade
     const hoje = dayjs();
