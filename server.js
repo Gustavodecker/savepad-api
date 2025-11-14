@@ -163,9 +163,9 @@ app.post("/checkout", async (req, res) => {
     const { user_id, plano, recorrencia } = req.body;
 
     const planosDisponiveis = {
-      basico: { nome: "SavePad Básico", preco: 10.0 },
-      pro: { nome: "SavePad Pro", preco: 20.0 },
-      familiar: { nome: "SavePad Familiar", preco: 40.0 },
+      basico: { nome: "AdminGrana Básico", preco: 10.0 },
+      pro: { nome: "AdminGrana Pro", preco: 20.0 },
+      familiar: { nome: "AdminGrana Familiar", preco: 40.0 },
     };
 
     const escolhido = planosDisponiveis[plano];
@@ -355,7 +355,7 @@ app.post("/webhook", async (req, res) => {
     if (status === "approved") {
       await notificarBotPagamento({
         user_id: user.id,
-        plano: "SavePad Pro",
+        plano: "AdminGrana Pro",
         status,
         valor: payment.transaction_amount,
       });
@@ -635,5 +635,5 @@ setupFamilyRoutes(app, dbGet, dbRun);
 
 // ================== INICIAR SERVIDOR ==================
 app.listen(PORT, () => {
-  console.log(`🚀 SavePad API rodando na porta ${PORT}`);
+  console.log(`🚀 AdminGrana API rodando na porta ${PORT}`);
 });
