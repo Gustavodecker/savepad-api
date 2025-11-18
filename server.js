@@ -370,7 +370,7 @@ app.post("/webhook", async (req, res) => {
 
 
 // =======================
-// 🔍 STATUS DO PLANO
+// 🔍 STATUS DO PLANO (TRIAL + PAGO)
 // =======================
 app.get("/status/:user_id", async (req, res) => {
   try {
@@ -378,37 +378,61 @@ app.get("/status/:user_id", async (req, res) => {
 
     console.log("📥 STATUS → user_id=" + userId);
 
-    // Busca SEMPRE o plano mais recente
+    // 1️⃣ Busca o plano mais recente (trial OU normal)
     const plano = await dbGet(
-      `SELECT * FROM plans
-       WHERE user_id = ?
-       ORDER BY datetime(expires_at) DESC
-       LIMIT 1`,
+      `SELECT *
+         FROM plans
+        WHERE user_id = ?
+        ORDER BY datetime(expires_at) DESC
+        LIMIT 1`,
       [userId]
     );
 
     if (!plano) {
-       console.log("🚫 Nenhum plano encontrado.");
-  return res.json({
-    status: "none",   // 🔥 padronizado
-    type: null,
-    expires_at: null
-  });
-}
+      console.log("🚫 Nenhum plano encontrado.");
+      return res.json({
+        status: "none",
+        type: null,
+        expires_at: null
+      });
+    }
 
-    // Verifica validade
     const hoje = dayjs();
     const expira = dayjs(plano.expires_at);
 
-    if (expira.isBefore(hoje)) {
-      console.log("⚠️ Plano encontrado, mas está expirado:", plano.expires_at);
-      return res.json({ status: "sem plano", type: plano.type });
+    // 2️⃣ Trial ativo
+    if (plano.type === "trial") {
+      if (expira.isAfter(hoje)) {
+        console.log("🎉 Trial ativo até:", plano.expires_at);
+        return res.json({
+          status: "trial",
+          type: "trial",
+          expires_at: plano.expires_at
+        });
+      } else {
+        console.log("⚠️ Trial expirado:", plano.expires_at);
+        return res.json({
+          status: "none",
+          type: "trial_expired",
+          expires_at: plano.expires_at
+        });
+      }
     }
 
-    console.log("📌 Plano ativo:", plano.type, " expira:", plano.expires_at);
+    // 3️⃣ Plano pago ativo
+    if (plano.status === "approved" && expira.isAfter(hoje)) {
+      console.log("📌 Plano ativo:", plano.type);
+      return res.json({
+        status: "active",
+        type: plano.type,
+        expires_at: plano.expires_at
+      });
+    }
 
+    // 4️⃣ Plano pago expirado
+    console.log("⚠️ Plano pago expirado:", plano.expires_at);
     return res.json({
-      status: "ativo",
+      status: "none",
       type: plano.type,
       expires_at: plano.expires_at
     });
@@ -418,6 +442,7 @@ app.get("/status/:user_id", async (req, res) => {
     return res.status(500).json({ status: "erro" });
   }
 });
+
 
 
 
