@@ -477,6 +477,58 @@ app.get("/api/check-whatsapp-link", async (req, res) => {
   }
 });
 
+// ================== ATUALIZAR WHATSAPP ==================
+app.post("/update-whatsapp", async (req, res) => {
+  try {
+    const { user_id, whatsapp_number } = req.body;
+
+    if (!user_id || !whatsapp_number) {
+      return res.status(400).json({ ok: false, error: "Campos obrigatórios ausentes" });
+    }
+
+    await dbRun(
+      "UPDATE users SET whatsapp_number = ? WHERE id = ?",
+      [whatsapp_number, user_id]
+    );
+
+    return res.json({ ok: true });
+
+  } catch (err) {
+    console.error("❌ Erro update-whatsapp:", err);
+    res.status(500).json({ ok: false, error: "Erro interno" });
+  }
+});
+
+
+// ================== VALIDAR CÓDIGO DO WHATSAPP ==================
+app.post("/validate-code", async (req, res) => {
+  try {
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ ok: false, error: "Código não informado" });
+    }
+
+    const user = await dbGet(
+      "SELECT id, name, email FROM users WHERE verification_code = ?",
+      [code]
+    );
+
+    if (!user) {
+      return res.json({ ok: false });
+    }
+
+    return res.json({
+      ok: true,
+      user
+    });
+
+  } catch (err) {
+    console.error("❌ Erro validate-code:", err);
+    res.status(500).json({ ok: false, error: "Erro interno" });
+  }
+});
+
 
 // ================== PLANOS FAMILIARES ==================
 
