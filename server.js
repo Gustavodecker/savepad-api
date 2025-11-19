@@ -97,6 +97,24 @@ app.get("/plans", async (req, res) => {
   }
 });
 
+// ================== Gráfico de Pizza – Gastos por Categoria ==================
+
+app.get("/reports/category-summary", async (req, res) => {
+  try {
+    const rows = await dbAll(`
+      SELECT category, SUM(amount) AS total
+      FROM transactions
+      GROUP BY category
+    `);
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Erro no gráfico:", err);
+    res.status(500).json({ error: "Erro ao carregar relatório" });
+  }
+});
+
+
 // ================== CADASTRO DE USUÁRIO ==================
 app.post("/register", async (req, res) => {
   try {
@@ -709,6 +727,33 @@ const members = await dbAll(
 });
 
 setupFamilyRoutes(app, dbGet, dbRun);
+// ================== EVENTOS DO SISTEMA (trial, upgrade etc.) ==================
+app.post("/event", async (req, res) => {
+  try {
+    const event = req.body;
+    console.log("📢 Evento recebido:", event);
+
+    if (!event.type) {
+      return res.status(400).json({ error: "Tipo do evento obrigatório." });
+    }
+
+    // 👉 Evento de trial ativado pelo bot
+    if (event.type === "trial_activated") {
+      console.log(`🎉 Trial ativado para user_id=${event.user_id}`);
+
+      // Aqui você pode futuramente ativar WebSocket, push, etc.
+      // Por enquanto só registra.
+
+      return res.json({ success: true });
+    }
+
+    return res.status(400).json({ error: "Evento desconhecido." });
+
+  } catch (err) {
+    console.error("❌ Erro no /event:", err);
+    res.status(500).json({ error: "Erro interno ao processar evento" });
+  }
+});
 
 // ================== INICIAR SERVIDOR ==================
 app.listen(PORT, () => {
