@@ -23,8 +23,12 @@ const { MercadoPagoConfig, Preference, Payment } = pkg;
 import { notificarBotPagamento } from "./botIntegration.js";
 import bcrypt from "bcrypt";
 import { setupFamilyRoutes } from "./familyRoutes.js";
-import isoWeek from "dayjs/plugin/isoWeek";
-import utc from "dayjs/plugin/utc";
+
+// 🔥 IMPORTS DO DAYJS (CORRIGIDOS)
+import isoWeek from "dayjs/plugin/isoWeek.js";
+import utc from "dayjs/plugin/utc.js";
+
+// 🔥 EXTEND DO DAYJS
 dayjs.extend(isoWeek);
 dayjs.extend(utc);
 
