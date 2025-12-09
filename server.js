@@ -755,6 +755,96 @@ app.post("/event", async (req, res) => {
   }
 });
 
+// === FIM DAS ROTAS ===
+
+app.get("/finance/summary/:user_id", async (req, res) => {
+  try {
+    const userId = req.params.user_id;
+
+    const totalMes = await dbGet(`
+      SELECT SUM(amount) AS total
+      FROM transactions
+      WHERE user_id = ?
+      AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
+    `, [userId]);
+
+    const mediaDiaria = await dbGet(`
+      SELECT AVG(amount) AS media
+      FROM transactions
+      WHERE user_id = ?
+    `, [userId]);
+
+    const maiorGasto = await dbGet(`
+      SELECT MAX(amount) AS max
+      FROM transactions
+      WHERE user_id = ?
+    `, [userId]);
+
+    const categoriaTop = await dbGet(`
+      SELECT category, COUNT(*) AS total
+      FROM transactions
+      WHERE user_id = ?
+      GROUP BY category
+      ORDER BY total DESC
+      LIMIT 1
+    `, [userId]);
+
+    res.json({
+      totalMes: totalMes?.total || 0,
+      mediaDiaria: mediaDiaria?.media || 0,
+      maiorGasto: maiorGasto?.max || 0,
+      categoriaTop: categoriaTop?.category || "-"
+    });
+  } catch (err) {
+    console.error("Erro /finance/summary:", err);
+    res.status(500).json({ error: "Erro ao carregar summary" });
+  }
+});
+
+app.get("/finance/monthly/:user_id", async (req, res) => {
+  try {
+    const userId = req.params.user_id;
+
+    const rows = await dbAll(`
+      SELECT 
+        strftime('%Y-%m', created_at) AS month,
+        SUM(amount) AS value
+      FROM transactions
+      WHERE user_id = ?
+      GROUP BY strftime('%Y-%m', created_at)
+      ORDER BY month ASC
+    `, [userId]);
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Erro /finance/monthly:", err);
+    res.status(500).json({ error: "Erro ao carregar mensal" });
+  }
+});
+
+app.get("/finance/categories/:user_id", async (req, res) => {
+  try {
+    const userId = req.params.user_id;
+
+    const rows = await dbAll(`
+      SELECT 
+        category AS name,
+        SUM(amount) AS value
+      FROM transactions
+      WHERE user_id = ?
+      GROUP BY category
+      ORDER BY value DESC
+    `, [userId]);
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Erro /finance/categories:", err);
+    res.status(500).json({ error: "Erro ao carregar categorias" });
+  }
+});
+
+
+
 // ================== INICIAR SERVIDOR ==================
 app.listen(PORT, () => {
   console.log(`🚀 AdminGrana API rodando na porta ${PORT}`);
