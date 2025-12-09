@@ -23,6 +23,11 @@ const { MercadoPagoConfig, Preference, Payment } = pkg;
 import { notificarBotPagamento } from "./botIntegration.js";
 import bcrypt from "bcrypt";
 import { setupFamilyRoutes } from "./familyRoutes.js";
+import isoWeek from "dayjs/plugin/isoWeek";
+import utc from "dayjs/plugin/utc";
+dayjs.extend(isoWeek);
+dayjs.extend(utc);
+
 
 
 dotenv.config();
@@ -842,6 +847,283 @@ app.get("/finance/categories/:user_id", async (req, res) => {
     res.status(500).json({ error: "Erro ao carregar categorias" });
   }
 });
+
+app.get("/finance/summary/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const monthStart = dayjs().startOf("month").format("YYYY-MM-DD");
+    const monthEnd = dayjs().endOf("month").format("YYYY-MM-DD");
+
+    const rows = await dbAll(
+      `SELECT *
+       FROM transactions
+       WHERE user_id = ? AND created_at BETWEEN ? AND ?`,
+      [userId, monthStart, monthEnd]
+    );
+
+    const totalMes = rows.reduce((acc, t) => acc + (t.amount || 0), 0);
+    const dias = dayjs().date();
+    const mediaDiaria = dias > 0 ? totalMes / dias : 0;
+
+    const maiorGasto = rows.length
+      ? Math.max(...rows.map(t => t.amount || 0))
+      : 0;
+
+    const categoriaTop = rows.reduce((map, t) => {
+      map[t.category] = (map[t.category] || 0) + t.amount;
+      return map;
+    }, {});
+
+    const catMaior = Object.entries(categoriaTop).sort((a, b) => b[1] - a[1])[0];
+
+    res.json({
+      totalMes,
+      mediaDiaria,
+      maiorGasto,
+      categoriaTop: catMaior ? catMaior[0] : "-"
+    });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: "Erro no summary" });
+  }
+});
+
+app.get("/finance/monthly/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const rows = await dbAll(
+      `SELECT 
+          strftime('%Y-%m', created_at) AS month,
+          SUM(amount) AS total
+       FROM transactions
+       WHERE user_id = ?
+       GROUP BY month
+       ORDER BY month DESC
+       LIMIT 12`,
+      [userId]
+    );
+
+    res.json(rows.map(r => ({
+      month: r.month,
+      value: Number(r.total)
+    })));
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: "Erro no monthly" });
+  }
+});
+
+app.get("/finance/categories/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const rows = await dbAll(
+      `SELECT category, SUM(amount) AS total
+       FROM transactions
+       WHERE user_id = ?
+       GROUP BY category`,
+      [userId]
+    );
+
+    res.json(rows.map(r => ({
+      name: r.category || "Outros",
+      value: Number(r.total)
+    })));
+  } catch (err) {
+    res.status(500).json({ error: "Erro nas categorias" });
+  }
+});
+
+app.get("/finance/weekly/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const rows = await dbAll(
+      `SELECT created_at, amount
+       FROM transactions
+       WHERE user_id = ?`,
+      [userId]
+    );
+
+    const resultado = {};
+
+    rows.forEach(t => {
+      const semana = dayjs(t.created_at).isoWeek();
+      resultado[semana] = (resultado[semana] || 0) + t.amount;
+    });
+
+    res.json(Object.entries(resultado).map(([week, value]) => ({
+      week: Number(week),
+      value
+    })));
+  } catch (err) {
+    res.status(500).json({ error: "Erro no weekly" });
+  }
+});
+
+app.get("/finance/yearly/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const ano = dayjs().year();
+
+    const rows = await dbAll(
+      `SELECT strftime('%m', created_at) AS month, SUM(amount) AS total
+       FROM transactions
+       WHERE user_id = ?
+         AND strftime('%Y', created_at) = ?
+       GROUP BY month`,
+      [userId, ano.toString()]
+    );
+
+    res.json(rows.map(r => ({
+      month: r.month,
+      value: Number(r.total)
+    })));
+  } catch (err) {
+    res.status(500).json({ error: "Erro no yearly" });
+  }
+});
+
+app.get("/finance/hours/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const rows = await dbAll(
+      `SELECT created_at, amount
+       FROM transactions
+       WHERE user_id = ?`,
+      [userId]
+    );
+
+    const horas = Array(24).fill(0);
+
+    rows.forEach(t => {
+      const hora = Number(dayjs(t.created_at).format("H"));
+      horas[hora] += t.amount;
+    });
+
+    res.json(horas.map((v, h) => ({
+      hour: h,
+      value: v
+    })));
+  } catch (err) {
+    res.status(500).json({ error: "Erro no hours" });
+  }
+});
+
+app.get("/finance/forecast/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const rows = await dbAll(
+      `SELECT strftime('%Y-%m', created_at) AS month, SUM(amount) AS total
+       FROM transactions
+       WHERE user_id = ?
+       GROUP BY month
+       ORDER BY month`,
+      [userId]
+    );
+
+    if (rows.length < 2) {
+      return res.json({ nextMonth: rows[0]?.total || 0, trend: "stable" });
+    }
+
+    const X = rows.map((_, i) => i);
+    const Y = rows.map(r => r.total);
+
+    const n = X.length;
+    const sumX = X.reduce((a, b) => a + b);
+    const sumY = Y.reduce((a, b) => a + b);
+    const sumXY = X.reduce((acc, x, i) => acc + x * Y[i], 0);
+    const sumX2 = X.reduce((acc, x) => acc + x * x, 0);
+
+    const b = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const a = (sumY - b * sumX) / n;
+
+    const nextIndex = n;
+    const nextMonth = a + b * nextIndex;
+
+    res.json({
+      nextMonth,
+      trend: b > 0 ? "up" : b < 0 ? "down" : "stable"
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Erro no forecast" });
+  }
+});
+
+app.get("/finance/anomalies/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const rows = await dbAll(
+      `SELECT amount, description, created_at
+       FROM transactions
+       WHERE user_id = ?`,
+      [userId]
+    );
+
+    const valores = rows.map(r => r.amount);
+    const media = valores.reduce((a, b) => a + b, 0) / valores.length;
+    const variancia = valores.reduce((acc, v) => acc + Math.pow(v - media, 2), 0) / valores.length;
+    const desvio = Math.sqrt(variancia);
+
+    const limite = media + desvio * 2;
+
+    const anomalias = rows.filter(r => r.amount >= limite);
+
+    res.json({ media, limite, anomalias });
+  } catch (err) {
+    res.status(500).json({ error: "Erro no anomalies" });
+  }
+});
+
+app.get("/finance/insights/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const [summary, forecast, compare] = await Promise.all([
+      dbGet(`SELECT SUM(amount) AS total
+             FROM transactions
+             WHERE user_id = ?
+               AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')`,
+            [userId]),
+
+      dbGet(`SELECT SUM(amount) AS total
+             FROM transactions
+             WHERE user_id = ?
+               AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')`,
+            [userId]),
+
+      dbAll(`SELECT amount FROM transactions WHERE user_id = ?`, [userId])
+    ]);
+
+    const insights = [];
+
+    if (summary?.total) {
+      insights.push(`Você já gastou R$ ${summary.total.toFixed(2)} este mês.`);
+    }
+
+    if (forecast?.nextMonth) {
+      insights.push(`Sua previsão de gastos para o próximo mês é de R$ ${forecast.nextMonth.toFixed(2)}.`);
+    }
+
+    if (compare) {
+      const diff = summary.total - (compare.total || 0);
+      insights.push(diff > 0
+        ? `Você gastou R$ ${diff.toFixed(2)} a mais que no mês anterior.`
+        : `Você gastou R$ ${Math.abs(diff).toFixed(2)} a menos que no mês anterior.`);
+    }
+
+    res.json({ insights });
+  } catch (err) {
+    res.status(500).json({ error: "Erro no insights" });
+  }
+});
+
 
 
 
